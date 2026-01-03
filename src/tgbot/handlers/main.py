@@ -17,7 +17,7 @@ from tgbot.services.common import BaseService
 from tgbot.services.profile import ProfileService
 from tgbot.services.settings import SettingsService
 
-__all__: tuple[str, ...] = ("MainHandler",)
+__all__: tuple[str] = ("MainHandler",)
 
 
 class MainHandler:

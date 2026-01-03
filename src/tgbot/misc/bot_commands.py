@@ -28,7 +28,6 @@ class BotCommands:
         Initializes the BotCommands class with the necessary parameters.
 
         :param bot: Bot instance.
-        :param db: PgDB instance for accessing user data.
         :param tmpl_render: TmplRender instance for rendering templates.
         :param admin_ids: List of admin user IDs.
         """

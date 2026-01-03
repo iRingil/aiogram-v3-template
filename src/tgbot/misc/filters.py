@@ -3,7 +3,7 @@
 from aiogram.filters import BaseFilter
 from aiogram.types import CallbackQuery, Message
 
-__all__: tuple[str, ...] = ("IsAdmin",)
+__all__: tuple[str] = ("IsAdmin",)
 
 
 class IsAdmin(BaseFilter):

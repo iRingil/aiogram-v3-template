@@ -5,7 +5,7 @@ from aiogram.types import CallbackQuery, ErrorEvent, Message
 
 from tgbot.config import logger
 
-__all__: tuple[str, ...] = ("ErrHandler",)
+__all__: tuple[str] = ("ErrHandler",)
 
 
 class ErrHandler(ErrorHandler):
@@ -17,13 +17,12 @@ class ErrHandler(ErrorHandler):
 
         :return: None
         """
-        # noinspection PyTypeChecker
-        event: ErrorEvent = self.event  # type: ignore
+        event: ErrorEvent = self.event  # type: ignore[assignment]
         msg_or_call_from_user: str = (
             f", Message: {event.update.message.text}"
             if isinstance(event.update.message, Message)
             else (
-                f", Callback: {event.update.callback_query.data}"  # type: ignore
+                f", Callback: {event.update.callback_query.data}"
                 if isinstance(event.update.callback_query, CallbackQuery)
                 else ""
             )
