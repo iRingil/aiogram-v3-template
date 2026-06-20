@@ -7,14 +7,14 @@
     <a href="https://pypi.org/project/APScheduler/3.11.2/">
         <img src="https://img.shields.io/badge/APScheduler-v3.11.2-informational" alt="APScheduler version">
     </a>
-    <a href="https://pypi.org/project/aiogram/3.24.0/">
-        <img src="https://img.shields.io/badge/aiogram-v3.24.0-informational" alt="aiogram version">
+    <a href="https://pypi.org/project/aiogram/3.29.0/">
+        <img src="https://img.shields.io/badge/aiogram-v3.29.0-informational" alt="aiogram version">
     </a>
-    <a href="https://pypi.org/project/babel/2.17.0/">
-        <img src="https://img.shields.io/badge/babel-v2.17.0-informational" alt="babel version">
+    <a href="https://pypi.org/project/babel/2.18.0/">
+        <img src="https://img.shields.io/badge/babel-v2.18.0-informational" alt="babel version">
     </a>
-    <a href="https://pypi.org/project/environs/14.5.0/">
-        <img src="https://img.shields.io/badge/environs-v14.5.0-informational" alt="environs version">
+    <a href="https://pypi.org/project/environs/15.0.1/">
+        <img src="https://img.shields.io/badge/environs-v15.0.1-informational" alt="environs version">
     </a>
     <a href="https://pypi.org/project/Jinja2/3.1.6/">
         <img src="https://img.shields.io/badge/Jinja2-v3.1.6-informational" alt="Jinja2 version">
@@ -22,8 +22,8 @@
     <a href="https://pypi.org/project/loguru/0.7.3/">
         <img src="https://img.shields.io/badge/loguru-v0.7.3-informational" alt="loguru version">
     </a>
-    <a href="https://pypi.org/project/redis/7.1.0/">
-        <img src="https://img.shields.io/badge/redis-v7.1.0-informational" alt="redis version">
+    <a href="https://pypi.org/project/redis/8.0.0/">
+        <img src="https://img.shields.io/badge/redis-v8.0.0-informational" alt="redis version">
     </a>
 </p>
 
