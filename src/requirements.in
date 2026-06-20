@@ -1,0 +1,7 @@
+APScheduler==3.11.2
+aiogram==3.29.0
+babel==2.18.0
+environs==15.0.1
+Jinja2==3.1.6
+loguru==0.7.3
+redis==8.0.0
