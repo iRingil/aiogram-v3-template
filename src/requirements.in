@@ -1,4 +1,4 @@
-APScheduler==3.11.2
+APScheduler==3.11.3
 aiogram==3.29.0
 babel==2.18.0
 environs==15.0.1

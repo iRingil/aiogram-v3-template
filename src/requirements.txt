@@ -16,7 +16,7 @@ aiosignal==1.4.0
     # via aiohttp
 annotated-types==0.7.0
     # via pydantic
-apscheduler==3.11.2
+apscheduler==3.11.3
     # via -r requirements.in
 attrs==26.1.0
     # via aiohttp
@@ -24,8 +24,6 @@ babel==2.18.0
     # via -r requirements.in
 certifi==2026.6.17
     # via aiogram
-colorama==0.4.6
-    # via loguru
 environs==15.0.1
     # via -r requirements.in
 frozenlist==1.8.0
@@ -68,11 +66,7 @@ typing-extensions==4.15.0
     #   typing-inspection
 typing-inspection==0.4.2
     # via pydantic
-tzdata==2026.2
-    # via tzlocal
 tzlocal==5.4.3
     # via apscheduler
-win32-setctime==1.2.0
-    # via loguru
 yarl==1.24.2
     # via aiohttp
