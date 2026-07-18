@@ -4,7 +4,7 @@
 #
 #    pip-compile --output-file=requirements-dev.txt requirements-dev.in
 #
-ast-serialize==0.5.0
+ast-serialize==0.6.0
     # via mypy
 astroid==4.0.4
     # via pylint
@@ -12,24 +12,17 @@ build==1.5.0
     # via pip-tools
 click==8.4.1
     # via pip-tools
-colorama==0.4.6
-    # via
-    #   -c requirements.txt
-    #   build
-    #   click
-    #   pylint
-    #   pytest
 dill==0.4.1
     # via pylint
 iniconfig==2.3.0
     # via pytest
 isort==8.0.1
     # via pylint
-librt==0.11.0
+librt==0.13.0
     # via mypy
 mccabe==0.7.0
     # via pylint
-mypy==2.1.0
+mypy==2.3.0
     # via -r requirements-dev.in
 mypy-extensions==1.1.0
     # via mypy
