@@ -37,16 +37,13 @@
     <a href="https://github.com/iRingil/aiogram-v3-template/actions/workflows/codeql.yml">
         <img src="https://github.com/iRingil/aiogram-v3-template/actions/workflows/codeql.yml/badge.svg" alt="Code QL">
     </a>
-    <a href="https://github.com/iRingil/aiogram-v3-template/actions/workflows/mypy.yml">
-        <img src="https://github.com/iRingil/aiogram-v3-template/actions/workflows/mypy.yml/badge.svg" alt="Mypy">
-    </a>
-    <a href="https://github.com/iRingil/aiogram-v3-template/actions/workflows/pylint.yml">
-        <img src="https://github.com/iRingil/aiogram-v3-template/actions/workflows/pylint.yml/badge.svg" alt="Pylint">
+    <a href="https://github.com/iRingil/aiogram-v3-template/actions/workflows/lint.yml">
+        <img src="https://github.com/iRingil/aiogram-v3-template/actions/workflows/lint.yml/badge.svg" alt="Lint">
     </a>
     <a href="https://github.com/iRingil/aiogram-v3-template/actions/workflows/pytest.yml">
         <img src="https://github.com/iRingil/aiogram-v3-template/actions/workflows/pytest.yml/badge.svg" alt="Pytest">
     </a>
-    <a href="https://github.com/psf/black">
-        <img src="https://img.shields.io/badge/code%20style-black-black.svg" alt="Code style: black">
+    <a href="https://github.com/astral-sh/ruff">
+        <img alt="Ruff" src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json">
     </a>
 </p>
