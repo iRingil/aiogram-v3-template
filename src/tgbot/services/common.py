@@ -12,6 +12,8 @@ from tgbot.misc.tmpl_render import TmplRender
 
 __all__: tuple[str] = ("BaseService",)
 
+_NOT_MODIFIED: str = "message is not modified"  # Telegram refuses an edit that changes nothing
+
 
 class BaseService:
     """
@@ -100,8 +102,8 @@ class BaseService:
             try:
                 edited: Message | bool = await origin.edit_text(text=text, reply_markup=reply_markup)
             except TelegramBadRequest as e:
-                # If the message as same as a current content
-                if "the same as a current content" in e.message:
+                # If the new content is the same as the current one
+                if _NOT_MODIFIED in e.message:
                     await call.answer()
                     return origin
             else:
@@ -121,16 +123,19 @@ class BaseService:
     @staticmethod
     async def _edit_or_send_msg(
         bot: Bot, chat_id: int, msg_id: int, text: str, reply_markup: InlineKeyboardMarkup | None = None
-    ) -> Message:
+    ) -> Message | None:
         """
         Edit the existing message if possible, otherwise send a new one.
+
+        Sends nothing if the new content is the same as the current one: there is no Message object
+        at hand here (unlike _edit_or_send_callback) to return as the unchanged result.
 
         :param bot: The bot instance.
         :param chat_id: The chat ID to send the message to.
         :param msg_id: The message ID to edit.
         :param text: The text to edit into the message.
         :param reply_markup: The keyboard markup to include (optional).
-        :return: The edited message or a new one.
+        :return: The edited message, a new one, or None if the content was unchanged.
         :raises TypeError: if Telegram returns no message for the edit.
         """
         # Trying to edit an existing message, if it does not exist or 48 hours have passed, the try will fail
@@ -138,8 +143,10 @@ class BaseService:
             edited: Message | bool = await bot.edit_message_text(
                 chat_id=chat_id, message_id=msg_id, text=text, reply_markup=reply_markup
             )
-        # If the message is too old, send a new one
-        except TelegramBadRequest:
+        except TelegramBadRequest as e:
+            if _NOT_MODIFIED in e.message:  # Nothing to change, and no need for a duplicate
+                return None
+            # If the message is too old, send a new one
             return await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
         if not isinstance(edited, Message):  # Telegram returns True only for inline messages
             raise TypeError("Telegram returned no message for an edit by chat and message IDs")

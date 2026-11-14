@@ -8,59 +8,66 @@ from loguru import logger
 from redis.asyncio import Redis
 
 from tgbot.misc.dataclasses import Paths, WebhookCredentials
-from tgbot.misc.log_setup import LoggingManager
 
 __all__: tuple[str, ...] = ("Config", "logger")
 
 
-_DEBUG: bool = True  # Change DEBUG to False when running on a production server
-_USE_WEBHOOK: bool = False  # Change USE_WEBHOOK to True to use a webhook instead of long polling
-_USE_REDIS: bool = False  # Change USE_REDIS to True to use redis storage for FSM instead of memory
-_USE_REDIS_SOCKET: bool = False  # Change to True to use a redis socket
 _BASE_DIR: Path = Path(__file__).resolve().parent  # Path settings
 
 
-# region Logging
-# Configured on the first import, so any module importing this logger gets it ready to use
-LoggingManager(debug=_DEBUG, log_dir=Path(_BASE_DIR, "../logs"), project_name="tgbot")
-# endregion
-
-
-# region Config
 class Config:
-    """Reads variables from the .env file."""
+    """
+    Reads variables from the .env file.
 
-    def __init__(
-        self,
-        *,
-        base_dir: Path = _BASE_DIR,
-        debug: bool = _DEBUG,
-        use_redis: bool = _USE_REDIS,
-        use_webhook: bool = _USE_WEBHOOK,
-        use_redis_socket: bool = _USE_REDIS_SOCKET,
-    ) -> None:
+    The mode switches are read from it too, all false when absent: DEBUG (verbose logging and full
+    tracebacks), USE_WEBHOOK (a webhook instead of long polling), USE_REDIS (Redis FSM storage
+    instead of memory) and USE_REDIS_SOCKET (connect to Redis over a Unix socket).
+    """
+
+    def __init__(self, *, base_dir: Path = _BASE_DIR) -> None:
         """
         Initializing a class or raises an exception if the .env file is not found.
 
         :param base_dir: Path to the base directory of the application.
-        :param debug: True, if debugging mode is enabled, otherwise False.
-        :param use_redis: True, if Redis is used, otherwise False.
-        :param use_webhook: True, if webhook is used, otherwise False.
-        :param use_redis_socket: True, if a Redis socket is used, otherwise False.
         :raises FileNotFoundError: if the .env file is not found.
         """
-        if not debug:
-            sys.tracebacklimit = 0
         self._env_path: Path = Path(base_dir, "../.env")
         if not self._env_path.exists():
             raise FileNotFoundError(f"The .env file was not found in the path: {self._env_path}")
         self._env: Env = Env()
         self._env.read_env(path=self._env_path, recurse=False)
+        self._debug: bool = self._env.bool("DEBUG", default=False)
+        if not self._debug:
+            sys.tracebacklimit = 0
+        self._log_dir: Path = Path(base_dir, "../logs")
         self._admins: list[int] = self._get_admins()
         self._paths: Paths = self._get_paths(base_dir=base_dir)
-        self._redis: Redis | None = self._get_redis(use_redis=use_redis, use_socket=use_redis_socket)
+        self._redis: Redis | None = self._get_redis(
+            use_redis=self._env.bool("USE_REDIS", default=False),
+            use_socket=self._env.bool("USE_REDIS_SOCKET", default=False),
+        )
         self._token: str = self._get_token()
-        self._webhook: WebhookCredentials | None = self._get_webhook(use_webhook=use_webhook)
+        self._webhook: WebhookCredentials | None = self._get_webhook(
+            use_webhook=self._env.bool("USE_WEBHOOK", default=False)
+        )
+
+    @property
+    def debug(self) -> bool:
+        """
+        Returns whether the bot runs in debug mode (verbose logging, full tracebacks).
+
+        :return: True if debug mode is enabled.
+        """
+        return self._debug
+
+    @property
+    def log_dir(self) -> Path:
+        """
+        Returns the path to the log files folder.
+
+        :return: Path to the log files folder.
+        """
+        return self._log_dir
 
     @property
     def admins(self) -> list[int]:
@@ -192,6 +199,3 @@ class Config:
         :return: WebhookCredentials or None.
         """
         return self._webhook
-
-
-# endregion

@@ -153,12 +153,10 @@ async def test_set_commands(bot_commands: BotCommands, mock_tmpl_render: TmplRen
         BotCommand(command="help", description="Help description"),
         BotCommand(command="settings", description="Settings description"),
     ]
-    mocked(mock_bot.set_my_commands).assert_any_call(
-        commands=expected_commands, language_code="en", scope=BotCommandScopeAllPrivateChats()
-    )
-    mocked(mock_bot.set_my_commands).assert_any_call(
-        commands=expected_commands, language_code="ru", scope=BotCommandScopeAllPrivateChats()
-    )
+    for locale in [None, "en", "ru"]:
+        mocked(mock_bot.set_my_commands).assert_any_call(
+            commands=expected_commands, language_code=locale, scope=BotCommandScopeAllPrivateChats()
+        )
     # Check admin commands for each admin ID and locale
     expected_admin_commands: list[BotCommand] = [
         BotCommand(command="start", description="Start description"),
@@ -167,20 +165,20 @@ async def test_set_commands(bot_commands: BotCommands, mock_tmpl_render: TmplRen
         BotCommand(command="admin", description="Admin description"),
     ]
     for admin_id in [123, 456]:
-        for locale in ["en", "ru"]:
+        for locale in [None, "en", "ru"]:
             mocked(mock_bot.set_my_commands).assert_any_call(
                 commands=expected_admin_commands, language_code=locale, scope=BotCommandScopeChat(chat_id=admin_id)
             )
     assert mocked(mock_tmpl_render.get_locales).call_count == 1
-    assert mocked(mock_tmpl_render.render).call_count == 10
-    assert mocked(mock_bot.set_my_commands).call_count == 8
+    assert mocked(mock_tmpl_render.render).call_count == 12  # 4 per locale (default, en, ru)
+    assert mocked(mock_bot.set_my_commands).call_count == 11  # 2 cleanups + 3 locales * (1 private + 2 admins)
 
 
 # noinspection PyUnresolvedReferences
 @pytest.mark.asyncio
 async def test_set_commands_no_locales(mock_bot: Bot, mock_tmpl_render: TmplRender) -> None:
     """
-    Tests the set_commands method of BotCommands when no locales are available.
+    Tests the set_commands method of BotCommands when no translations are available.
 
     :param mock_bot: The mocked Bot instance.
     :param mock_tmpl_render: The mocked TmplRender instance.
@@ -193,9 +191,9 @@ async def test_set_commands_no_locales(mock_bot: Bot, mock_tmpl_render: TmplRend
     mocked(mock_bot.set_my_commands).assert_any_call(commands=[], scope=BotCommandScopeAllGroupChats())
     # Check private chats commands cleanup
     mocked(mock_bot.set_my_commands).assert_any_call(commands=[], scope=BotCommandScopeAllPrivateChats())
-    # Check that no commands are set for private chats or admins
-    assert mocked(mock_tmpl_render.render).call_count == 0
-    assert mocked(mock_bot.set_my_commands).call_count == 2  # Only cleanup calls
+    # Only the default commands are set, for private chats and the admin
+    assert mocked(mock_tmpl_render.render).call_count == 4
+    assert mocked(mock_bot.set_my_commands).call_count == 4  # 2 cleanups + 1 private + 1 admin
 
 
 # noinspection PyUnresolvedReferences
@@ -227,5 +225,5 @@ async def test_set_commands_empty_admin_ids(mock_bot: Bot, mock_tmpl_render: Tmp
         commands=expected_commands, language_code="ru", scope=BotCommandScopeAllPrivateChats()
     )
     assert mocked(mock_tmpl_render.get_locales).call_count == 1
-    assert mocked(mock_tmpl_render.render).call_count == 6  # 3 per locale (en, ru)
-    assert mocked(mock_bot.set_my_commands).call_count == 4  # 1 group + 1 private + 2 locales
+    assert mocked(mock_tmpl_render.render).call_count == 12  # 4 per locale (default, en, ru)
+    assert mocked(mock_bot.set_my_commands).call_count == 5  # 2 cleanups + 3 locales

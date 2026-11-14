@@ -1,113 +1,57 @@
-"""Unit tests for src/tgbot/handlers/errors.py."""
+"""
+Unit tests for src/tgbot/handlers/errors.py (ErrHandler).
 
-# ruff: noqa: S101
+ErrService.log_exception is the only collaborator (patched as an AsyncMock). It has its own full
+test suite in tests/src/tgbot/services/test_errors.py, so this suite only checks that handle()
+delegates to it with the right event, not what logging it produces. The ErrorEvent itself is built
+as a real aiogram object (a cheap pydantic model, no network calls).
+"""
 
-from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock
 
 import pytest
-from aiogram.handlers import BaseHandler
-from aiogram.types import CallbackQuery, ErrorEvent, Message, Update
+from aiogram.types import ErrorEvent, Update
 
 from tgbot.handlers.errors import ErrHandler
+from tgbot.services.errors import ErrService
 
 __all__: tuple[str, ...] = ()
 
 
-@pytest.fixture
-def error_handler() -> ErrHandler:
+def _error_event(exception: Exception) -> ErrorEvent:
     """
-    Fixture to create a base ErrorHandler instance with a mocked event.
+    Builds a real ErrorEvent wrapping the given exception, with an otherwise-empty update.
 
-    :return: An instance of ErrHandler with a mocked ErrorEvent.
+    :param exception: The exception that was raised while handling the update.
+    :return: A usable ErrorEvent instance.
     """
-    event: Mock = Mock(spec=ErrorEvent)
-    event.update = Mock(spec=Update)
-    return ErrHandler(event=event)
+    return ErrorEvent(update=Update(update_id=1), exception=exception)
 
 
-@pytest.mark.asyncio
-async def test_handle_with_message(error_handler: ErrHandler) -> None:
+@pytest.fixture(name="log_exception")
+def log_exception_fixture(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     """
-    Test handling an error event with a message.
+    Replaces ErrService.log_exception with an AsyncMock, as seen by tgbot.handlers.errors.
 
-    :param error_handler: The error handler instance to test.
-    :return: None
+    :param monkeypatch: pytest fixture used to patch tgbot.handlers.errors.ErrService.log_exception.
+    :return: The AsyncMock standing in for ErrService.log_exception.
     """
-    message: Mock = Mock(spec=Message, text="Test message")
-    update: Mock = Mock(spec=Update, message=message, callback_query=None)
-    exception: Exception = Exception("Test exception")
-    event: Mock = Mock(spec=ErrorEvent, update=update, exception=exception)
-    error_handler.event = event
-    with patch(target="tgbot.handlers.errors.logger") as mock_logger:
-        await error_handler.handle()
-        mock_logger.error.assert_called_once_with(
-            "Exception while handling an update: Test exception , Message: Test message"
-        )
+    mock: AsyncMock = AsyncMock(return_value=None)
+    monkeypatch.setattr(target=ErrService, name="log_exception", value=mock)
+    return mock
 
 
-@pytest.mark.asyncio
-async def test_handle_with_callback(error_handler: ErrHandler) -> None:
-    """
-    Test handling an error event with a callback query.
+class TestHandle:
+    """Tests ErrHandler.handle(): delegation to ErrService.log_exception."""
 
-    :param error_handler: The error handler instance to test.
-    :return: None
-    """
-    callback: Mock = Mock(spec=CallbackQuery, data="test_callback")
-    update: Mock = Mock(spec=Update, message=None, callback_query=callback)
-    exception: Exception = Exception("Test exception")
-    event: Mock = Mock(spec=ErrorEvent, update=update, exception=exception)
-    error_handler.event = event
-    with patch(target="tgbot.handlers.errors.logger") as mock_logger:
-        await error_handler.handle()
-        mock_logger.error.assert_called_once_with(
-            "Exception while handling an update: Test exception , Callback: test_callback"
-        )
+    async def test_calls_err_service_log_exception_with_the_event(self, log_exception: AsyncMock) -> None:
+        """
+        handle() awaits ErrService.log_exception with the handler's own event, unchanged.
 
-
-@pytest.mark.asyncio
-async def test_handle_without_message_or_callback(error_handler: ErrHandler) -> None:
-    """
-    Test handling an error event without a message or callback query.
-
-    :param error_handler: The error handler instance to test.
-    :return: None
-    """
-    update: Mock = Mock(spec=Update, message=None, callback_query=None)
-    exception: Exception = Exception("Test exception")
-    event: Mock = Mock(spec=ErrorEvent, update=update, exception=exception)
-    error_handler.event = event
-    with patch(target="tgbot.handlers.errors.logger") as mock_logger:
-        await error_handler.handle()
-        mock_logger.error.assert_called_once_with("Exception while handling an update: Test exception ")
-
-
-def test_error_handler_init(error_handler: ErrHandler) -> None:
-    """
-    Test the basic initialization of the error handler.
-
-    :param error_handler: The error handler instance to test.
-    :return: None
-    """
-    assert isinstance(error_handler, BaseHandler)
-    assert hasattr(error_handler, "event")
-    assert hasattr(error_handler, "handle")
-
-
-@pytest.mark.asyncio
-async def test_handle_with_broken_event(error_handler: ErrHandler) -> None:
-    """
-    Test handling an error event with minimal attributes.
-
-    :param error_handler: The error handler instance to test.
-    :return: None
-    """
-    update: Mock = Mock(spec=Update, message=None, callback_query=None)
-    event: Mock = Mock(spec=ErrorEvent, update=update, exception=Exception("Test exception"))
-    error_handler.event = event
-    with patch(target="tgbot.handlers.errors.logger") as mock_logger:
-        await error_handler.handle()
-        mock_logger.error.assert_called_once()
-        call_args: Any = mock_logger.error.call_args[0][0]
-        assert "Test exception" in call_args
+        :param log_exception: Fixture standing in for ErrService.log_exception.
+        :return: None
+        """
+        event: ErrorEvent = _error_event(exception=RuntimeError("boom"))
+        handler: ErrHandler = ErrHandler(event=event)
+        await handler.handle()
+        log_exception.assert_awaited_once_with(event=event)

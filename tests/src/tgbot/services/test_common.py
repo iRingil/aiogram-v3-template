@@ -19,6 +19,11 @@ from tgbot.services.common import BaseService
 
 __all__: tuple[str, ...] = ()
 
+_NOT_MODIFIED_ERROR: str = (
+    "Bad Request: message is not modified: specified new message content and reply markup are exactly the same"
+    " as a current content and reply markup of the message"
+)
+
 
 @pytest.fixture
 def mock_config(mocker: MockerFixture) -> Config:
@@ -195,7 +200,7 @@ async def test_edit_or_send_callback_same_content(
     mocker.patch.object(
         target=origin,
         attribute="edit_text",
-        side_effect=TelegramBadRequest(method=EditMessageText(text="Test"), message="the same as a current content"),
+        side_effect=TelegramBadRequest(method=EditMessageText(text="Test"), message=_NOT_MODIFIED_ERROR),
     )
     callback_query.answer = AsyncMock()
     reply_markup: InlineKeyboardMarkup = InlineKeyboardMarkup(inline_keyboard=[])
@@ -227,7 +232,7 @@ async def test_edit_or_send_msg_success(base_service: BaseService, message: Mess
     reply_markup: InlineKeyboardMarkup = InlineKeyboardMarkup(inline_keyboard=[])
     text: str = "Edited text"
     # Act
-    result: Message = await base_service._edit_or_send_msg(
+    result: Message | None = await base_service._edit_or_send_msg(
         bot=bot, chat_id=message.chat.id, msg_id=message.message_id, text=text, reply_markup=reply_markup
     )
     # Assert
@@ -257,7 +262,7 @@ async def test_edit_or_send_msg_failure(base_service: BaseService, message: Mess
     reply_markup: InlineKeyboardMarkup = InlineKeyboardMarkup(inline_keyboard=[])
     text: str = "New text"
     # Act
-    result: Message = await base_service._edit_or_send_msg(
+    result: Message | None = await base_service._edit_or_send_msg(
         bot=bot, chat_id=message.chat.id, msg_id=message.message_id, text=text, reply_markup=reply_markup
     )
     # Assert
@@ -367,3 +372,19 @@ def test_locale(base_service: BaseService, language_code: str | None, expected: 
     """
     assert base_service._locale(user=Mock(spec=User, language_code=language_code)) == expected
     assert base_service._locale(user=None) == "en"
+
+
+@pytest.mark.asyncio
+async def test_edit_or_send_msg_not_modified(base_service: BaseService) -> None:
+    """
+    Test that _edit_or_send_msg sends no duplicate when the new content is the same as the current one.
+
+    :param base_service: Instance of BaseService.
+    """
+    bot: AsyncMock = AsyncMock()
+    bot.edit_message_text = AsyncMock(
+        side_effect=TelegramBadRequest(method=EditMessageText(text="Test"), message=_NOT_MODIFIED_ERROR)
+    )
+    result: Message | None = await base_service._edit_or_send_msg(bot=bot, chat_id=12345, msg_id=67890, text="Text")
+    assert result is None
+    bot.send_message.assert_not_called()

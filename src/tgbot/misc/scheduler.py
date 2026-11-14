@@ -12,7 +12,13 @@ __all__: tuple[str] = ("Scheduler",)
 
 
 class Scheduler:
-    """Allows to run tasks on a schedule."""
+    """
+    Thin wrapper around a single AsyncIOScheduler instance (UTC).
+
+    Add the jobs in start(), before the scheduler itself is started, for example:
+    self._scheduler.add_job(func=self._job, trigger="cron", minute="*", second=0, max_instances=1).
+    APScheduler is untyped, so add_job needs `# pyright: ignore[reportUnknownMemberType]`.
+    """
 
     def __init__(self, config: Config, broadcaster: Broadcaster, tmpl: TmplRender) -> None:
         """
@@ -27,11 +33,19 @@ class Scheduler:
         self._broadcaster: Broadcaster = broadcaster
         self._tmpl: TmplRender = tmpl
 
-    async def schedule(self) -> None:
+    def start(self) -> None:
         """
-        Creates tasks in the scheduler and starts it.
+        Adds the jobs and starts the scheduler.
 
         :return: None
         """
-        # Start scheduler
         self._scheduler.start()
+
+    def shutdown(self, *, wait: bool = True) -> None:
+        """
+        Stops the scheduler.
+
+        :param wait: If True, waits for the running jobs to finish before returning.
+        :return: None
+        """
+        self._scheduler.shutdown(wait=wait)

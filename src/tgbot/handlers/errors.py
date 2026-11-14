@@ -3,9 +3,9 @@
 from typing import override
 
 from aiogram.handlers import BaseHandler
-from aiogram.types import CallbackQuery, ErrorEvent, Message
+from aiogram.types import ErrorEvent
 
-from tgbot.config import logger
+from tgbot.services.errors import ErrService
 
 __all__: tuple[str] = ("ErrHandler",)
 
@@ -21,18 +21,8 @@ class ErrHandler(BaseHandler[ErrorEvent]):
     @override
     async def handle(self) -> None:
         """
-        Logs exceptions that are not handled by other functions.
+        Delegates handling of an exception not caught by other functions to ErrService.
 
         :return: None
         """
-        event: ErrorEvent = self.event
-        msg_or_call_from_user: str = (
-            f", Message: {event.update.message.text}"
-            if isinstance(event.update.message, Message)
-            else (
-                f", Callback: {event.update.callback_query.data}"
-                if isinstance(event.update.callback_query, CallbackQuery)
-                else ""
-            )
-        )
-        logger.error(f"Exception while handling an update: {event.exception} {msg_or_call_from_user}")
+        await ErrService.log_exception(event=self.event)

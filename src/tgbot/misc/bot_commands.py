@@ -16,12 +16,14 @@ class BotCommands:
     :cvar _cmd_help: Path to the template for the '/help' command.
     :cvar _cmd_settings: Path to the template for the '/settings' command.
     :cvar _cmd_admin: Path to the template for the '/admin' command.
+    :cvar _DEFAULT_LOCALE: Locale of the commands shown to users whose language has no translation.
     """
 
     _cmd_start: str = "common/cmd_start.jinja2"
     _cmd_help: str = "common/cmd_help.jinja2"
     _cmd_settings: str = "common/cmd_settings.jinja2"
     _cmd_admin: str = "admin/cmd_admin.jinja2"
+    _DEFAULT_LOCALE: str = "en"
 
     def __init__(self, bot: Bot, tmpl_render: TmplRender, admin_ids: list[int]) -> None:
         """
@@ -70,16 +72,27 @@ class BotCommands:
         # Cleaning commands
         await self._bot.set_my_commands(commands=[], scope=BotCommandScopeAllGroupChats())
         await self._bot.set_my_commands(commands=[], scope=BotCommandScopeAllPrivateChats())
-        # Set commands for each locale in private chats
+        await self._set_for_locale(locale=self._DEFAULT_LOCALE, language_code=None)
         for locale in self._tmpl.get_locales():
-            commands: list[BotCommand] = await self._get_commands(lang_code=locale)
+            await self._set_for_locale(locale=locale, language_code=locale)
+
+    async def _set_for_locale(self, locale: str, language_code: str | None) -> None:
+        """
+        Sets the commands of one locale.
+
+        The user commands for every private chat, plus the admin commands in each admin's own chat.
+
+        :param locale: Locale to render the command descriptions in.
+        :param language_code: Telegram language code the commands apply to, or None for the
+            default commands shown to users of any language without its own.
+        :return: None
+        """
+        commands: list[BotCommand] = await self._get_commands(lang_code=locale)
+        await self._bot.set_my_commands(
+            commands=commands, language_code=language_code, scope=BotCommandScopeAllPrivateChats()
+        )
+        admin_commands: list[BotCommand] = commands + await self._get_admins_commands(lang_code=locale)
+        for admin_id in self._admin_ids:
             await self._bot.set_my_commands(
-                commands=commands, language_code=locale, scope=BotCommandScopeAllPrivateChats()
+                commands=admin_commands, language_code=language_code, scope=BotCommandScopeChat(chat_id=admin_id)
             )
-            for admin_id in self._admin_ids:
-                # Create a fresh copy of commands to avoid modifying the original list
-                admin_commands: list[BotCommand] = commands.copy()
-                admin_commands.extend(await self._get_admins_commands(lang_code=locale))
-                await self._bot.set_my_commands(
-                    commands=admin_commands, language_code=locale, scope=BotCommandScopeChat(chat_id=admin_id)
-                )

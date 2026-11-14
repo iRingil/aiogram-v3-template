@@ -17,6 +17,7 @@ from tests.helpers import mocked
 from tgbot.config import Config
 from tgbot.misc.broadcaster import Broadcaster
 from tgbot.misc.keyboards import KeyboardManager
+from tgbot.misc.middlewares import AntiFloodMiddleware
 from tgbot.misc.scheduler import Scheduler
 from tgbot.misc.tmpl_render import TmplRender
 
@@ -31,16 +32,14 @@ def tg_bot() -> Iterator[TgBot]:
 
     :return: TgBot instance.
     """
-    with (
-        patch(target="bot.Config", return_value=MagicMock(spec=Config)) as mock_config,
-        patch(target="bot.Bot", return_value=MagicMock(spec=Bot)) as mock_bot,
-    ):
-        mock_config.return_value.token = "mock_token"
-        mock_config.return_value.redis = MagicMock()  # Enable Redis to use RedisStorage
-        mock_config.return_value.admins = [123, 456]
-        mock_config.return_value.paths = MagicMock()
-        mock_config.return_value.webhook = None
-        bot_instance: TgBot = TgBot()
+    config: MagicMock = MagicMock(spec=Config)
+    config.token = "mock_token"
+    config.redis = MagicMock()  # Enable Redis to use RedisStorage
+    config.admins = [123, 456]
+    config.paths = MagicMock()
+    config.webhook = None
+    with patch(target="bot.Bot", return_value=MagicMock(spec=Bot)) as mock_bot:
+        bot_instance: TgBot = TgBot(config=config)
         bot_instance._bot = mock_bot.return_value
         bot_instance._bot.default = DefaultBotProperties(
             parse_mode="HTML", allow_sending_without_reply=True, link_preview_is_disabled=True
@@ -66,6 +65,7 @@ def test_init(tg_bot: TgBot) -> None:
     assert isinstance(tg_bot._kb, KeyboardManager)
     assert isinstance(tg_bot._scheduler, Scheduler)
     assert isinstance(tg_bot._dp.storage, RedisStorage)
+    assert any(isinstance(middleware, AntiFloodMiddleware) for middleware in tg_bot._dp.update.outer_middleware)
     assert tg_bot._bot.default == DefaultBotProperties(
         parse_mode="HTML", allow_sending_without_reply=True, link_preview_is_disabled=True
     )
@@ -81,7 +81,7 @@ async def test_on_startup_polling(tg_bot: TgBot) -> None:
     :return: None
     """
     tg_bot._broadcaster.broadcast = AsyncMock()
-    tg_bot._scheduler.schedule = AsyncMock()
+    tg_bot._scheduler.start = MagicMock()
     mock_bot_commands: MagicMock = MagicMock()
     mock_bot_commands.set_commands = AsyncMock()
     mocked(tg_bot._config).webhook = None
@@ -90,7 +90,7 @@ async def test_on_startup_polling(tg_bot: TgBot) -> None:
     tg_bot._broadcaster.broadcast.assert_called_once_with(
         users_ids=tg_bot._config.admins, msg="Bot was started", notify=False
     )
-    tg_bot._scheduler.schedule.assert_called_once()
+    tg_bot._scheduler.start.assert_called_once_with()
     mock_bot_commands.set_commands.assert_called_once()
     mocked(tg_bot._bot.set_webhook).assert_not_called()
 
@@ -105,7 +105,7 @@ async def test_on_startup_webhook(tg_bot: TgBot) -> None:
     :return: None
     """
     tg_bot._broadcaster.broadcast = AsyncMock()
-    tg_bot._scheduler.schedule = AsyncMock()
+    tg_bot._scheduler.start = MagicMock()
     mock_bot_commands: MagicMock = MagicMock()
     mock_bot_commands.set_commands = AsyncMock()
     mocked(tg_bot._config).webhook = MagicMock(
@@ -116,10 +116,13 @@ async def test_on_startup_webhook(tg_bot: TgBot) -> None:
     tg_bot._broadcaster.broadcast.assert_called_once_with(
         users_ids=tg_bot._config.admins, msg="Bot was started", notify=False
     )
-    tg_bot._scheduler.schedule.assert_called_once()
+    tg_bot._scheduler.start.assert_called_once_with()
     mock_bot_commands.set_commands.assert_called_once()
     mocked(tg_bot._bot.set_webhook).assert_called_once_with(
-        url="https://example.com/webhook_path", drop_pending_updates=False, secret_token="mock_token"
+        url="https://example.com/webhook_path",
+        allowed_updates=["message", "callback_query"],
+        drop_pending_updates=False,
+        secret_token="mock_token",
     )
 
 
@@ -134,12 +137,18 @@ async def test_on_shutdown_polling(tg_bot: TgBot) -> None:
     """
     tg_bot._broadcaster.broadcast = AsyncMock()
     mocked(tg_bot._config).webhook = None
-    await tg_bot._on_shutdown()
+    with (
+        patch.object(target=tg_bot._scheduler, attribute="shutdown") as mock_shutdown,
+        patch.object(target=tg_bot._dp.storage, attribute="close") as mock_storage_close,
+    ):
+        await tg_bot._on_shutdown()
+    mock_shutdown.assert_called_once_with()
     tg_bot._broadcaster.broadcast.assert_called_once_with(
         users_ids=tg_bot._config.admins, msg="Bot was stopped", notify=False
     )
     mocked(tg_bot._bot.delete_webhook).assert_not_called()
-    mocked(tg_bot._bot.session.close).assert_called_once()
+    mock_storage_close.assert_awaited_once_with()
+    mocked(tg_bot._bot.session.close).assert_not_called()  # aiogram closes the session itself
 
 
 # noinspection PyUnresolvedReferences,PyPropertyAccess
@@ -154,12 +163,17 @@ async def test_on_shutdown_webhook(tg_bot: TgBot) -> None:
     tg_bot._broadcaster.broadcast = AsyncMock()
     tg_bot._bot.delete_webhook = AsyncMock()
     mocked(tg_bot._config).webhook = MagicMock()
-    await tg_bot._on_shutdown()
+    with (
+        patch.object(target=tg_bot._scheduler, attribute="shutdown") as mock_shutdown,
+        patch.object(target=tg_bot._dp.storage, attribute="close") as mock_storage_close,
+    ):
+        await tg_bot._on_shutdown()
+    mock_shutdown.assert_called_once_with()
     tg_bot._broadcaster.broadcast.assert_called_once_with(
         users_ids=tg_bot._config.admins, msg="Bot was stopped", notify=False
     )
     tg_bot._bot.delete_webhook.assert_called_once()
-    mocked(tg_bot._bot.session.close).assert_called_once()
+    mock_storage_close.assert_awaited_once_with()
 
 
 # noinspection PyPropertyAccess
@@ -175,10 +189,10 @@ def test_run_polling(tg_bot: TgBot) -> None:
         patch(target="bot.run") as mock_run,
     ):
         mocked(tg_bot._config).webhook = None
-        with patch.object(target=tg_bot._dp, attribute="start_polling", new=MagicMock()):
+        with patch.object(target=tg_bot._dp, attribute="start_polling", new=MagicMock()) as mock_polling:
             tg_bot.run()
-        assert mock_run.call_count == 1
-        assert "main" in mock_run.call_args.kwargs
+        mock_polling.assert_called_once_with(tg_bot._bot, allowed_updates=["message", "callback_query"])
+        mock_run.assert_called_once_with(main=mock_polling.return_value)
         assert tg_bot._on_startup in [handler.callback for handler in tg_bot._dp.startup.handlers]
         assert tg_bot._on_shutdown in [handler.callback for handler in tg_bot._dp.shutdown.handlers]
 
@@ -218,12 +232,19 @@ async def test_main() -> None:
 
     :return: None
     """
-    with patch(target="bot.TgBot") as mock_tg_bot, patch(target="bot.logger", new_callable=MagicMock) as mock_logger:
+    with (
+        patch(target="bot.Config") as mock_config,
+        patch(target="bot.LoggingManager") as mock_logging,
+        patch(target="bot.TgBot") as mock_tg_bot,
+        patch(target="bot.logger", new_callable=MagicMock) as mock_logger,
+    ):
         mock_bot_instance: MagicMock = mock_tg_bot.return_value
         mock_bot_instance.run = MagicMock()
         main()
+        config: MagicMock = mock_config.return_value
+        mock_logging.assert_called_once_with(debug=config.debug, log_dir=config.log_dir, project_name="tgbot")
         mock_logger.info.assert_any_call("Starting bot")
-        mock_tg_bot.assert_called_once()
+        mock_tg_bot.assert_called_once_with(config=config)
         mock_bot_instance.run.assert_called_once()
         mock_logger.info.assert_any_call("Bot stopped!")
 
@@ -235,7 +256,12 @@ async def test_main_with_exception() -> None:
 
     :return: None
     """
-    with patch(target="bot.TgBot") as mock_tg_bot, patch(target="bot.logger", new_callable=MagicMock) as mock_logger:
+    with (
+        patch(target="bot.Config"),
+        patch(target="bot.LoggingManager"),
+        patch(target="bot.TgBot") as mock_tg_bot,
+        patch(target="bot.logger", new_callable=MagicMock) as mock_logger,
+    ):
         mock_bot_instance: MagicMock = mock_tg_bot.return_value
         mock_bot_instance.run = MagicMock(side_effect=Exception("Test error"))
         main()
@@ -253,7 +279,12 @@ async def test_main_with_keyboard_interrupt() -> None:
 
     :return: None
     """
-    with patch(target="bot.TgBot") as mock_tg_bot, patch(target="bot.logger", new_callable=MagicMock) as mock_logger:
+    with (
+        patch(target="bot.Config"),
+        patch(target="bot.LoggingManager"),
+        patch(target="bot.TgBot") as mock_tg_bot,
+        patch(target="bot.logger", new_callable=MagicMock) as mock_logger,
+    ):
         mock_bot_instance: MagicMock = mock_tg_bot.return_value
         mock_bot_instance.run = MagicMock(side_effect=KeyboardInterrupt)
         main()
@@ -271,7 +302,12 @@ async def test_main_with_system_exit() -> None:
 
     :return: None
     """
-    with patch(target="bot.TgBot") as mock_tg_bot, patch(target="bot.logger", new_callable=MagicMock) as mock_logger:
+    with (
+        patch(target="bot.Config"),
+        patch(target="bot.LoggingManager"),
+        patch(target="bot.TgBot") as mock_tg_bot,
+        patch(target="bot.logger", new_callable=MagicMock) as mock_logger,
+    ):
         mock_bot_instance: MagicMock = mock_tg_bot.return_value
         mock_bot_instance.run = MagicMock(side_effect=SystemExit)
         main()

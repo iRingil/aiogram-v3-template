@@ -26,8 +26,7 @@ def scheduler() -> Scheduler:
     config: Config = MagicMock(spec=Config)
     broadcaster: Broadcaster = MagicMock(spec=Broadcaster)
     tmpl: TmplRender = MagicMock(spec=TmplRender)
-    scheduler: Scheduler = Scheduler(config=config, broadcaster=broadcaster, tmpl=tmpl)
-    return scheduler
+    return Scheduler(config=config, broadcaster=broadcaster, tmpl=tmpl)
 
 
 def test_init(scheduler: Scheduler) -> None:
@@ -44,15 +43,29 @@ def test_init(scheduler: Scheduler) -> None:
     assert isinstance(scheduler._tmpl, TmplRender)
 
 
-@pytest.mark.asyncio
-async def test_schedule(scheduler: Scheduler) -> None:
+def test_start(scheduler: Scheduler) -> None:
     """
-    Test scheduling of all tasks.
+    Test that start() starts the scheduler without adding any job.
 
     :param scheduler: Instance of Scheduler to test.
     :return: None
     """
     with patch.object(target=scheduler._scheduler, attribute="start") as mock_start:
-        await scheduler.schedule()
+        scheduler.start()
         assert scheduler._scheduler.get_jobs() == []  # The template schedules no tasks
-        mock_start.assert_called_once()
+        mock_start.assert_called_once_with()
+
+
+@pytest.mark.parametrize(("kwargs", "expected"), [({}, True), ({"wait": False}, False)])
+def test_shutdown(*, scheduler: Scheduler, kwargs: dict[str, bool], expected: bool) -> None:
+    """
+    Test that shutdown() waits for the running jobs by default, or not if asked.
+
+    :param scheduler: Instance of Scheduler to test.
+    :param kwargs: Arguments passed to Scheduler.shutdown().
+    :param expected: The wait value expected to reach the underlying scheduler.
+    :return: None
+    """
+    with patch.object(target=scheduler._scheduler, attribute="shutdown") as mock_shutdown:
+        scheduler.shutdown(**kwargs)
+        mock_shutdown.assert_called_once_with(wait=expected)
