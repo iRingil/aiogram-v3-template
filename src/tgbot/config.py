@@ -2,16 +2,13 @@
 
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from environs import Env, EnvError
-from loguru import logger as _logger
+from loguru import logger
 from redis.asyncio import Redis
 
 from tgbot.misc.dataclasses import Paths, WebhookCredentials
-
-if TYPE_CHECKING:
-    from loguru import Logger  # Exists only in the loguru type stubs
+from tgbot.misc.log_setup import LoggingManager
 
 __all__: tuple[str, ...] = ("Config", "logger")
 
@@ -24,42 +21,8 @@ _BASE_DIR: Path = Path(__file__).resolve().parent  # Path settings
 
 
 # region Logging
-class Logging:
-    """Performs logging settings in the application."""
-
-    def __init__(self, *, debug: bool = _DEBUG, base_dir: Path = _BASE_DIR) -> None:
-        """
-        Initialization of necessary parameters.
-
-        :param debug: True, if debugging mode is enabled, otherwise False.
-        :param base_dir: Path to the base directory of the application.
-        """
-        _time: str = "<green>{time:%Y-%m-%d %H:%M:%S}</green>"
-        _level: str = "<level>{level: <8}</level>"
-        _for_debug: str = "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | " if debug else ""
-        _msg: str = "<level>{message}</level>"
-        _log_dir: Path = Path(base_dir, "../logs")
-        _log_dir.mkdir(exist_ok=True)
-        _logger.remove(handler_id=0)
-        _log_level: str = "DEBUG" if debug else "ERROR"
-        _format: str = f"{_time} | {_level} | {_for_debug}{_msg}"
-        _logger.add(sink=sys.stderr, level=_log_level, format=_format, colorize=True)
-        _logger.add(sink=Path(_log_dir, "tgbot.log"), level=_log_level, format=_format, encoding="utf-8")
-        self._log: Logger = _logger
-
-    @property
-    def logger(self) -> "Logger":
-        """
-        Returns the Logger object.
-
-        :return: Logger object.
-        """
-        return self._log
-
-
-logger: "Logger" = Logging().logger
-
-
+# Configured on the first import, so any module importing this logger gets it ready to use
+LoggingManager(debug=_DEBUG, log_dir=Path(_BASE_DIR, "../logs"), project_name="tgbot")
 # endregion
 
 

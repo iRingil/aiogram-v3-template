@@ -71,7 +71,7 @@ class BotCommands:
         await self._bot.set_my_commands(commands=[], scope=BotCommandScopeAllGroupChats())
         await self._bot.set_my_commands(commands=[], scope=BotCommandScopeAllPrivateChats())
         # Set commands for each locale in private chats
-        for locale in await self._tmpl.get_locales():
+        for locale in self._tmpl.get_locales():
             commands: list[BotCommand] = await self._get_commands(lang_code=locale)
             await self._bot.set_my_commands(
                 commands=commands, language_code=locale, scope=BotCommandScopeAllPrivateChats()

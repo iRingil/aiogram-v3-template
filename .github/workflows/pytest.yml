@@ -26,4 +26,4 @@ jobs:
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
       - name: Test with Pytest
         run: |
-          pytest tests --ignore=tests/integration
+          pytest tests --ignore=tests/integration --cov

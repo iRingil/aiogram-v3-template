@@ -12,7 +12,7 @@ import pytest
 from environs import EnvError
 from redis.asyncio import Redis
 
-from tgbot.config import Config, logger
+from tgbot.config import Config
 from tgbot.misc.dataclasses import Paths, WebhookCredentials
 
 __all__: tuple = ()
@@ -98,51 +98,6 @@ def clear_env() -> Generator[None]:
         elif key in os.environ:
             # If the key was added during the test but wasn't there originally
             del os.environ[key]
-
-
-# endregion
-
-
-# region Tests for Logging
-def test_logger_type() -> None:
-    """
-    Test that logger is initialized as a Logger instance.
-
-    :return: None
-    """
-    assert isinstance(logger, type(logger))
-
-
-def test_logger_output_to_stderr(capsys: pytest.CaptureFixture[str]) -> None:
-    """
-    Test that logger outputs messages to stderr.
-
-    :param capsys: Fixture to capture output.
-    :return: None
-    """
-    logger.remove()
-    logger.add(sink=sys.stderr, level="INFO")
-    logger.info("Test message to stderr")
-    captured = capsys.readouterr()
-    assert "Test message to stderr" in captured.err
-
-
-def test_logger_output_to_file(tmp_path: Path) -> None:
-    """
-    Test that logger outputs messages to a file.
-
-    :param tmp_path: Temporary directory provided by pytest.
-    :return: None
-    """
-    log_file: Path = Path(tmp_path, "logs/tgbot.log")
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    logger.remove()
-    logger.add(sink=log_file, level="INFO")
-    logger.error("Test message to file")
-    assert log_file.exists()
-    with log_file.open(mode="r", encoding="utf-8") as file:
-        content: str = file.read()
-    assert "Test message to file" in content
 
 
 # endregion

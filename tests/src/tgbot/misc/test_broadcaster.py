@@ -1,253 +1,291 @@
-"""Unit tests for src/tgbot/misc/broadcaster.py."""
+"""
+Unit tests for src/tgbot/misc/broadcaster.py.
 
-# ruff: noqa: PLR2004, S101, S106
+Bot is an autospecced mock, so a wrong kwarg in broadcaster.py fails these tests. The singleton is
+reset around every test, and asyncio.sleep is replaced with a recorder to keep the suite fast.
+"""
 
-from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+# ruff: noqa: PLR2004, S101, SLF001
+
+from asyncio import gather
+from collections.abc import Iterator
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
 from aiogram import Bot
 from aiogram.enums import ChatAction
 from aiogram.exceptions import TelegramAPIError
-from aiogram.methods.send_message import SendMessage
-from aiogram.types import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.methods import SendMessage
+from aiogram.types import BufferedInputFile, InlineKeyboardMarkup
 
+from tgbot.misc import broadcaster as broadcaster_module
 from tgbot.misc.broadcaster import Broadcaster
 
 __all__: tuple = ()
 
 
-@pytest.fixture
-def mock_bot() -> Bot:
+def _api_error() -> TelegramAPIError:
     """
-    Fixture to create a mock Bot object with a valid token.
+    Builds a real TelegramAPIError, backed by a throwaway SendMessage method.
 
-    :return: Mock instance of the Bot class.
+    :return: A TelegramAPIError instance.
     """
-    return Bot(token="123456789:mock_token")
+    return TelegramAPIError(method=SendMessage(chat_id=1, text="x"), message="bad")
 
 
-@pytest.fixture
-def broadcaster(mock_bot: Bot) -> Broadcaster:
+@pytest.fixture(autouse=True)
+def _reset_singleton() -> Iterator[None]:
     """
-    Fixture to create a Broadcaster instance with mock objects.
+    Resets the Broadcaster singleton before and after each test.
 
-    :param mock_bot: Fixture providing a mock Bot instance.
-    :return: Broadcaster instance.
-    """
-    return Broadcaster(bot=mock_bot)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("msg", "notify", "expected_notify"), [("Test message", True, False), ("Test message", False, True)]
-)
-@patch.object(target=Bot, attribute="send_message", new_callable=AsyncMock)
-async def test_send_content_text(
-    mock_send_message: AsyncMock, broadcaster: Broadcaster, msg: str, *, notify: bool, expected_notify: bool
-) -> None:
-    """
-    Test send_content with text message for different notification settings.
-
-    :param mock_send_message: Mocked send_message method.
-    :param broadcaster: Fixture providing a Broadcaster instance.
-    :param msg: Message text to send.
-    :param notify: Notification setting.
-    :param expected_notify: Expected disable_notification value.
     :return: None
     """
-    mock_send_message.return_value = Message(
-        message_id=123, chat=Chat(id=123, type="private"), date=datetime.now(tz=UTC)
-    )
-    message_id: int | None = await broadcaster.send_content(user_id=123, msg=msg, content_type="text", notify=notify)
-    mock_send_message.assert_called_once_with(
-        chat_id=123,
-        text="Test message",
-        disable_notification=expected_notify,
-        reply_markup=None,
-        reply_to_message_id=None,
-    )
-    assert message_id == 123
+    Broadcaster._instance = None
+    yield
+    Broadcaster._instance = None
 
 
-@pytest.mark.asyncio
-@patch.object(target=Bot, attribute="send_message", new_callable=AsyncMock)
-async def test_send_content_with_keyboard(mock_send_message: AsyncMock, broadcaster: Broadcaster) -> None:
+@pytest.fixture(autouse=True, name="sleep_calls")
+def sleep_calls_fixture(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     """
-    Test send_content with text message and inline keyboard.
+    Replaces the broadcaster's sleep with a no-op that records each requested delay.
 
-    :param mock_send_message: Mocked send_message method.
-    :param broadcaster: Fixture providing a Broadcaster instance.
+    :param monkeypatch: pytest fixture used to patch the sleep function.
+    :return: The list every requested delay is appended to.
+    """
+    delays: list[float] = []
+
+    async def _instant_sleep(delay: float) -> None:
+        """
+        Records the delay instead of waiting it out.
+
+        :param delay: The rate-limit delay.
+        :return: None
+        """
+        delays.append(delay)
+
+    monkeypatch.setattr(target=broadcaster_module, name="sleep", value=_instant_sleep)
+    return delays
+
+
+@pytest.fixture(name="bot")
+def bot_fixture() -> MagicMock:
+    """
+    An autospecced aiogram Bot, its send methods are AsyncMocks checked against the real signatures.
+
+    :return: The mocked Bot instance.
+    """
+    return create_autospec(spec=Bot, instance=True)
+
+
+@pytest.fixture(name="broadcaster")
+def broadcaster_fixture(bot: MagicMock) -> Broadcaster:
+    """
+    A fresh Broadcaster backed by the mocked bot.
+
+    :param bot: The mocked Bot fixture.
+    :return: The Broadcaster instance under test.
+    """
+    return Broadcaster(bot=bot)
+
+
+def test_singleton_keeps_the_first_bot(bot: MagicMock) -> None:
+    """
+    Test that a second construction returns the same instance, still bound to the first bot.
+
+    :param bot: The mocked Bot fixture.
     :return: None
     """
-    keyboard: InlineKeyboardMarkup = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="Click", callback_data="test")]]
-    )
-    mock_send_message.return_value = Message(
-        message_id=123, chat=Chat(id=123, type="private"), date=datetime.now(tz=UTC)
-    )
-    message_id: int | None = await broadcaster.send_content(
-        user_id=123, msg="Test with keyboard", content_type="text", reply_markup=keyboard
-    )
-    mock_send_message.assert_called_once_with(
-        chat_id=123,
-        text="Test with keyboard",
-        disable_notification=False,
-        reply_markup=keyboard,
-        reply_to_message_id=None,
-    )
-    assert message_id == 123
+    first: Broadcaster = Broadcaster(bot=bot)
+    second: Broadcaster = Broadcaster(bot=create_autospec(spec=Bot, instance=True))
+    assert first is second
+    assert second._bot is bot
 
 
-@pytest.mark.asyncio
-@patch.object(target=Bot, attribute="send_chat_action", new_callable=AsyncMock)
-async def test_send_content_chat_action(mock_send_chat_action: AsyncMock, broadcaster: Broadcaster) -> None:
+async def test_send_text(broadcaster: Broadcaster, bot: MagicMock) -> None:
     """
-    Test send_content with chat_action content type.
+    Test that a text message is sent via send_message and its ID is returned.
 
-    :param mock_send_chat_action: Mocked send_chat_action method.
-    :param broadcaster: Fixture providing a Broadcaster instance.
+    :param broadcaster: The Broadcaster fixture.
+    :param bot: The mocked Bot fixture.
     :return: None
     """
-    message_id: int | None = await broadcaster.send_content(user_id=123, content_type="chat_action")
-    mock_send_chat_action.assert_called_once_with(chat_id=123, action=ChatAction.TYPING)
-    assert message_id is None
-
-
-@pytest.mark.asyncio
-@patch.object(target=Bot, attribute="send_message", new_callable=AsyncMock)
-async def test_send_content_empty_text(mock_send_message: AsyncMock, broadcaster: Broadcaster) -> None:
-    """
-    Test send_content with empty text message.
-
-    :param mock_send_message: Mocked send_message method.
-    :param broadcaster: Fixture providing a Broadcaster instance.
-    :return: None
-    """
-    message_id: int | None = await broadcaster.send_content(user_id=123, msg=None, content_type="text")
-    mock_send_message.assert_not_called()
-    assert message_id is None
-
-
-@pytest.mark.asyncio
-@patch.object(target=Bot, attribute="send_message", new_callable=AsyncMock)
-async def test_send_content_telegram_error(mock_send_message: AsyncMock, broadcaster: Broadcaster) -> None:
-    """
-    Test send_content when Telegram API raises an exception, handled by decorator.
-
-    :param mock_send_message: Mocked send_message method.
-    :param broadcaster: Fixture providing a Broadcaster instance.
-    :return: None
-    """
-    mock_send_message.side_effect = TelegramAPIError(
-        message="Telegram API error", method=SendMessage(chat_id=123, text="Test message")
+    bot.send_message.return_value = MagicMock(message_id=111)
+    assert await broadcaster.send_content(user_id=42, msg="hello") == 111
+    bot.send_message.assert_awaited_once_with(
+        chat_id=42, text="hello", disable_notification=False, reply_markup=None, reply_to_message_id=None
     )
-    message_id: int | None = await broadcaster.send_content(user_id=123, msg="Test message", content_type="text")
-    assert message_id == 0
 
 
-@pytest.mark.asyncio
-@patch.object(target=Bot, attribute="send_message", new_callable=AsyncMock)
-async def test_broadcast_success(mock_send_message: AsyncMock, broadcaster: Broadcaster) -> None:
+async def test_send_text_options(broadcaster: Broadcaster, bot: MagicMock) -> None:
     """
-    Test broadcast with successful message sending, including reply_to_message_id.
+    Test that the text is truncated to 4096 chars and notify, markup and reply ID are passed through.
 
-    :param mock_send_message: Mocked send_message method.
-    :param broadcaster: Fixture providing a Broadcaster instance.
+    :param broadcaster: The Broadcaster fixture.
+    :param bot: The mocked Bot fixture.
     :return: None
     """
-    keyboard: InlineKeyboardMarkup = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="Test", callback_data="test")]]
+    bot.send_message.return_value = MagicMock(message_id=1)
+    markup: InlineKeyboardMarkup = InlineKeyboardMarkup(inline_keyboard=[])
+    await broadcaster.send_content(user_id=42, msg="x" * 5000, notify=False, reply_markup=markup, reply_to_message_id=7)
+    bot.send_message.assert_awaited_once_with(
+        chat_id=42, text="x" * 4096, disable_notification=True, reply_markup=markup, reply_to_message_id=7
     )
-    mock_send_message.side_effect = [
-        Message(message_id=1, chat=Chat(id=123, type="private"), date=datetime.now(tz=UTC)),
-        Message(message_id=2, chat=Chat(id=456, type="private"), date=datetime.now(tz=UTC)),
-    ]
+
+
+@pytest.mark.parametrize("msg", [None, ""])
+async def test_send_empty_text(broadcaster: Broadcaster, bot: MagicMock, msg: str | None) -> None:
+    """
+    Test that an empty text message is not sent.
+
+    :param broadcaster: The Broadcaster fixture.
+    :param bot: The mocked Bot fixture.
+    :param msg: The empty message value.
+    :return: None
+    """
+    assert await broadcaster.send_content(user_id=42, msg=msg) is None
+    bot.send_message.assert_not_awaited()
+
+
+async def test_send_raises_telegram_error(broadcaster: Broadcaster, bot: MagicMock) -> None:
+    """
+    Test that send_content lets a Telegram API error propagate to the caller.
+
+    :param broadcaster: The Broadcaster fixture.
+    :param bot: The mocked Bot fixture.
+    :return: None
+    """
+    bot.send_message.side_effect = _api_error()
+    with pytest.raises(expected_exception=TelegramAPIError):
+        await broadcaster.send_content(user_id=42, msg="hi")
+
+
+async def test_send_chat_action(broadcaster: Broadcaster, bot: MagicMock) -> None:
+    """
+    Test that a chat action sends the typing indicator and returns None.
+
+    :param broadcaster: The Broadcaster fixture.
+    :param bot: The mocked Bot fixture.
+    :return: None
+    """
+    assert await broadcaster.send_content(user_id=42, content_type="chat_action") is None
+    bot.send_chat_action.assert_awaited_once_with(chat_id=42, action=ChatAction.TYPING)
+
+
+async def test_send_photo(broadcaster: Broadcaster, bot: MagicMock) -> None:
+    """
+    Test that a photo is sent with msg as its caption and its ID is returned.
+
+    :param broadcaster: The Broadcaster fixture.
+    :param bot: The mocked Bot fixture.
+    :return: None
+    """
+    bot.send_photo.return_value = MagicMock(message_id=222)
+    result: int | None = await broadcaster.send_content(
+        user_id=42, msg="a chart", content_type="photo", photo=b"PNGDATA"
+    )
+    assert result == 222
+    sent_photo: BufferedInputFile = bot.send_photo.call_args.kwargs["photo"]
+    assert sent_photo.data == b"PNGDATA"
+    assert sent_photo.filename == "photo.png"
+    assert bot.send_photo.call_args.kwargs["caption"] == "a chart"
+    assert bot.send_photo.call_args.kwargs["chat_id"] == 42
+
+
+@pytest.mark.parametrize("photo", [None, b""])
+async def test_send_empty_photo(broadcaster: Broadcaster, bot: MagicMock, photo: bytes | None) -> None:
+    """
+    Test that an empty photo is not sent.
+
+    :param broadcaster: The Broadcaster fixture.
+    :param bot: The mocked Bot fixture.
+    :param photo: The empty photo value.
+    :return: None
+    """
+    assert await broadcaster.send_content(user_id=42, content_type="photo", photo=photo) is None
+    bot.send_photo.assert_not_awaited()
+
+
+async def test_send_rate_limit(broadcaster: Broadcaster, bot: MagicMock, sleep_calls: list[float]) -> None:
+    """
+    Test that a single call sleeps once for the rate-limit delay.
+
+    :param broadcaster: The Broadcaster fixture.
+    :param bot: The mocked Bot fixture.
+    :param sleep_calls: Fixture recording every requested delay.
+    :return: None
+    """
+    bot.send_message.return_value = MagicMock(message_id=1)
+    await broadcaster.send_content(user_id=42, msg="hi")
+    assert sleep_calls == [1.0 / Broadcaster._max_msgs_per_sec]
+
+
+async def test_send_concurrent(broadcaster: Broadcaster, bot: MagicMock, sleep_calls: list[float]) -> None:
+    """
+    Test that concurrent calls are serialized by the lock and each gets its own message ID.
+
+    :param broadcaster: The Broadcaster fixture.
+    :param bot: The mocked Bot fixture.
+    :param sleep_calls: Fixture recording every requested delay.
+    :return: None
+    """
+    bot.send_message.side_effect = [MagicMock(message_id=101), MagicMock(message_id=202)]
+    first, second = await gather(
+        broadcaster.send_content(user_id=1, msg="first"), broadcaster.send_content(user_id=2, msg="second")
+    )
+    assert {first, second} == {101, 202}
+    assert len(sleep_calls) == 2
+
+
+async def test_broadcast_forwards_options(broadcaster: Broadcaster, bot: MagicMock) -> None:
+    """
+    Test that broadcast sends to every user with all options passed through.
+
+    :param broadcaster: The Broadcaster fixture.
+    :param bot: The mocked Bot fixture.
+    :return: None
+    """
+    bot.send_photo.return_value = MagicMock(message_id=1)
+    markup: InlineKeyboardMarkup = InlineKeyboardMarkup(inline_keyboard=[])
     await broadcaster.broadcast(
-        users_ids=[123, 456], msg="Test broadcast", reply_markup=keyboard, reply_to_message_id=789
+        users_ids=[1, 2],
+        msg="caption",
+        content_type="photo",
+        notify=False,
+        reply_markup=markup,
+        reply_to_message_id=9,
+        photo=b"PNGDATA",
     )
-    assert mock_send_message.call_count == 2
-    mock_send_message.assert_any_call(
-        chat_id=123, text="Test broadcast", disable_notification=False, reply_markup=keyboard, reply_to_message_id=789
-    )
-    mock_send_message.assert_any_call(
-        chat_id=456, text="Test broadcast", disable_notification=False, reply_markup=keyboard, reply_to_message_id=789
-    )
+    assert [call.kwargs["chat_id"] for call in bot.send_photo.await_args_list] == [1, 2]
+    for call in bot.send_photo.await_args_list:
+        assert call.kwargs["caption"] == "caption"
+        assert call.kwargs["disable_notification"] is True
+        assert call.kwargs["reply_markup"] is markup
+        assert call.kwargs["reply_to_message_id"] == 9
+        assert call.kwargs["photo"].data == b"PNGDATA"
 
 
-@pytest.mark.asyncio
-@patch.object(target=Bot, attribute="send_message", new_callable=AsyncMock)
-async def test_broadcast_partial_failure(mock_send_message: AsyncMock, broadcaster: Broadcaster) -> None:
+async def test_broadcast_telegram_error(broadcaster: Broadcaster, bot: MagicMock) -> None:
     """
-    Test broadcast with partial failure in sending messages.
+    Test that a Telegram error for one user does not skip the rest.
 
-    :param mock_send_message: Mocked send_message method.
-    :param broadcaster: Fixture providing a Broadcaster instance.
+    :param broadcaster: The Broadcaster fixture.
+    :param bot: The mocked Bot fixture.
     :return: None
     """
-    mock_send_message.side_effect = [
-        Message(message_id=1, chat=Chat(id=123, type="private"), date=datetime.now(tz=UTC)),
-        TelegramAPIError(message="Telegram API error", method=SendMessage(chat_id=456, text="Test broadcast")),
-    ]
-    await broadcaster.broadcast(users_ids=[123, 456], msg="Test broadcast")
-    assert mock_send_message.call_count == 2
+    bot.send_message.side_effect = [MagicMock(message_id=1), _api_error(), MagicMock(message_id=3)]
+    await broadcaster.broadcast(users_ids=[1, 2, 3], msg="hi")
+    assert bot.send_message.await_count == 3
 
 
-@pytest.mark.asyncio
-@patch.object(target=Bot, attribute="send_message", new_callable=AsyncMock)
-async def test_broadcast_empty_users(mock_send_message: AsyncMock, broadcaster: Broadcaster) -> None:
+async def test_broadcast_other_error(broadcaster: Broadcaster, bot: MagicMock) -> None:
     """
-    Test broadcast with an empty list of users.
+    Test that any other exception stops the broadcast and is swallowed by handle_exc.
 
-    :param mock_send_message: Mocked send_message method.
-    :param broadcaster: Fixture providing a Broadcaster instance.
+    :param broadcaster: The Broadcaster fixture.
+    :param bot: The mocked Bot fixture.
     :return: None
     """
-    await broadcaster.broadcast(users_ids=[], msg="Test broadcast")
-    mock_send_message.assert_not_called()
-
-
-@pytest.mark.asyncio
-@patch.object(target=Bot, attribute="send_message", new_callable=AsyncMock)
-async def test_rate_limiting(mock_send_message: AsyncMock, broadcaster: Broadcaster) -> None:
-    """
-    Test that the broadcaster respects rate limiting.
-
-    :param mock_send_message: Mocked send_message method.
-    :param broadcaster: Fixture providing a Broadcaster instance.
-    :return: None
-    """
-    mock_send_message.side_effect = [
-        Message(message_id=1, chat=Chat(id=123, type="private"), date=datetime.now(tz=UTC)),
-        Message(message_id=2, chat=Chat(id=456, type="private"), date=datetime.now(tz=UTC)),
-        Message(message_id=3, chat=Chat(id=789, type="private"), date=datetime.now(tz=UTC)),
-    ]
-    start_time: datetime = datetime.now(tz=UTC)
-    await broadcaster.broadcast(users_ids=[123, 456, 789], msg="Test rate limiting")
-    end_time: datetime = datetime.now(tz=UTC)
-    duration: float = (end_time - start_time).total_seconds()
-    # 3 messages at 20 messages/sec should take at least 0.1 seconds (2 intervals of 0.05s)
-    assert duration >= 0.1
-    assert mock_send_message.call_count == 3
-
-
-@pytest.mark.asyncio
-@patch.object(target=Bot, attribute="send_message", new_callable=AsyncMock)
-async def test_send_content_with_reply_to_message_id(mock_send_message: AsyncMock, broadcaster: Broadcaster) -> None:
-    """
-    Test send_content with text message and reply_to_message_id.
-
-    :param mock_send_message: Mocked send_message method.
-    :param broadcaster: Fixture providing a Broadcaster instance.
-    :return: None
-    """
-    mock_send_message.return_value = Message(
-        message_id=123, chat=Chat(id=123, type="private"), date=datetime.now(tz=UTC)
-    )
-    message_id: int | None = await broadcaster.send_content(
-        user_id=123, msg="Test with reply", content_type="text", reply_to_message_id=456
-    )
-    mock_send_message.assert_called_once_with(
-        chat_id=123, text="Test with reply", disable_notification=False, reply_markup=None, reply_to_message_id=456
-    )
-    assert message_id == 123
+    bot.send_message.side_effect = [MagicMock(message_id=1), RuntimeError("boom"), MagicMock(message_id=3)]
+    await broadcaster.broadcast(users_ids=[1, 2, 3], msg="hi")
+    assert bot.send_message.await_count == 2

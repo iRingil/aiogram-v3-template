@@ -57,7 +57,7 @@ async def mock_tmpl_render() -> TmplRender:
         return ""
 
     tmpl_render.render = AsyncMock(side_effect=render_side_effect)
-    tmpl_render.get_locales = AsyncMock(return_value=["en", "ru"])
+    tmpl_render.get_locales = MagicMock(return_value=["en", "ru"])
     return tmpl_render
 
 
@@ -186,7 +186,7 @@ async def test_set_commands_no_locales(mock_bot: Bot, mock_tmpl_render: TmplRend
     :param mock_tmpl_render: The mocked TmplRender instance.
     :return: None
     """
-    mock_tmpl_render.get_locales = AsyncMock(return_value=[])
+    mock_tmpl_render.get_locales = MagicMock(return_value=[])
     bot_commands: BotCommands = BotCommands(bot=mock_bot, tmpl_render=mock_tmpl_render, admin_ids=[123])
     await bot_commands.set_commands()
     # Check group chats commands cleanup
