@@ -1,9 +1,8 @@
-"""Unit tests for src/tgbot/misc/scheduler.py"""
+"""Unit tests for src/tgbot/misc/scheduler.py."""
 
-# pylint: disable=protected-access
-# pylint: disable=redefined-outer-name
+# ruff: noqa: S101, SLF001
 
-from datetime import timezone
+from datetime import UTC
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -39,7 +38,7 @@ def test_init(scheduler: Scheduler) -> None:
     :return: None
     """
     assert isinstance(scheduler._scheduler, AsyncIOScheduler)
-    assert scheduler._scheduler.timezone == timezone.utc
+    assert scheduler._scheduler.timezone == UTC
     assert isinstance(scheduler._config, Config)
     assert isinstance(scheduler._broadcaster, Broadcaster)
     assert isinstance(scheduler._tmpl, TmplRender)
@@ -53,9 +52,10 @@ async def test_schedule(scheduler: Scheduler) -> None:
     :param scheduler: Instance of Scheduler to test.
     :return: None
     """
-    with patch.object(target=scheduler._scheduler, attribute="add_job") as mock_add_job, patch.object(
-        target=scheduler._scheduler, attribute="start"
-    ) as mock_start:
+    with (
+        patch.object(target=scheduler._scheduler, attribute="add_job") as mock_add_job,
+        patch.object(target=scheduler._scheduler, attribute="start") as mock_start,
+    ):
         # Execute the method
         await scheduler.schedule()
         # Verify calls

@@ -1,8 +1,6 @@
-# type: ignore
-"""Unit tests for src/tgbot/services/settings.py"""
+"""Unit tests for src/tgbot/services/settings.py."""
 
-# pylint: disable=redefined-outer-name
-# pylint: disable=protected-access
+# ruff: noqa: SLF001
 
 from unittest.mock import AsyncMock, Mock
 

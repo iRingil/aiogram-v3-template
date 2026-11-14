@@ -1,4 +1,4 @@
-"""This module contains business logic for settings-related functionality."""
+"""Business logic for settings-related functionality."""
 
 from aiogram.types import Message
 
@@ -37,7 +37,7 @@ class SettingsService(BaseService):
         :param message: The incoming message from the user.
         :return: None
         """
-        text: str = await self._tmpl.render(tmpl=self._msg_settings, locale=message.from_user.language_code)
+        text: str = await self._tmpl.render(tmpl=self._msg_settings, locale=self._locale(user=message.from_user))
         # Send answer with settings menu to the user
         await message.answer(text=text)
 

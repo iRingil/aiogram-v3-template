@@ -1,8 +1,4 @@
-# type: ignore
-"""Unit tests for src/tgbot/handlers/profile.py"""
-
-# pylint: disable=redefined-outer-name
-# pylint: disable=duplicate-code
+"""Unit tests for src/tgbot/handlers/profile.py."""
 
 from unittest.mock import AsyncMock
 
@@ -11,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from pytest_mock import MockerFixture
 
+from tests.helpers import mocked
 from tgbot.handlers.profile import ProfileHandler
 from tgbot.services.profile import ProfileService
 
@@ -88,9 +85,9 @@ async def test_cmd_start(
     # Act
     await profile_hdlr.cmd_start(message=msg, state=fsm_context)
     # Assert
-    fsm_context.clear.assert_called_once()
-    msg.delete.assert_called_once()
-    profile_svc.start.assert_called_once_with(message=msg)
+    mocked(fsm_context.clear).assert_called_once()
+    mocked(msg.delete).assert_called_once()
+    mocked(profile_svc.start).assert_called_once_with(message=msg)
 
 
 # noinspection PyUnresolvedReferences
@@ -107,5 +104,5 @@ async def test_cmd_help(profile_hdlr: ProfileHandler, msg: Message, profile_svc:
     # Act
     await profile_hdlr.cmd_help(message=msg)
     # Assert
-    msg.delete.assert_called_once()
-    profile_svc.help.assert_called_once_with(message=msg)
+    mocked(msg.delete).assert_called_once()
+    mocked(profile_svc.help).assert_called_once_with(message=msg)

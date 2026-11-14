@@ -1,13 +1,14 @@
-"""Unit tests for src/tgbot/misc/filters.py"""
+"""Unit tests for src/tgbot/misc/filters.py."""
 
-# pylint: disable=redefined-outer-name
+# ruff: noqa: S101
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
 from aiogram.types import CallbackQuery, Message, User
 
+from tests.helpers import mocked
 from tgbot.config import Config
 from tgbot.misc.filters import IsAdmin
 
@@ -38,7 +39,7 @@ def mock_obj(request: pytest.FixtureRequest, mock_user: User) -> CallbackQuery |
     """
     if request.param is CallbackQuery:
         return MagicMock(spec=CallbackQuery, from_user=mock_user)
-    return MagicMock(spec=Message, from_user=mock_user, date=datetime.now(), chat=MagicMock(id=123))
+    return MagicMock(spec=Message, from_user=mock_user, date=datetime.now(tz=UTC), chat=MagicMock(id=123))
 
 
 @pytest.fixture
@@ -52,9 +53,9 @@ def mock_config() -> Config:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("admins, expected_result", [([12345], True), ([67890], False), ([], False)])
+@pytest.mark.parametrize(("admins", "expected_result"), [([12345], True), ([67890], False), ([], False)])
 async def test_is_admin(
-    mock_obj: CallbackQuery | Message, mock_config: Config, admins: list[int], expected_result: bool
+    mock_obj: CallbackQuery | Message, mock_config: Config, admins: list[int], *, expected_result: bool
 ) -> None:
     """
     Test IsAdmin filter with different admin configurations.
@@ -66,7 +67,19 @@ async def test_is_admin(
     :return: None
     """
     # noinspection PyPropertyAccess
-    mock_config.admins = admins  # type: ignore
+    mocked(mock_config).admins = admins
     filter_instance: IsAdmin = IsAdmin(admins_ids=mock_config.admins)
     result: bool = await filter_instance(mock_obj)
     assert result == expected_result
+
+
+@pytest.mark.asyncio
+async def test_is_admin_without_user() -> None:
+    """
+    Test IsAdmin filter with a message that has no sender (e.g. a channel post).
+
+    :return: None
+    """
+    filter_instance: IsAdmin = IsAdmin(admins_ids=[12345])
+    result: bool = await filter_instance(MagicMock(spec=Message, from_user=None))
+    assert result is False

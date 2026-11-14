@@ -5,9 +5,10 @@ from asyncio import run
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.fsm.storage.base import DefaultKeyBuilder
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.fsm.storage.redis import DefaultKeyBuilder, RedisStorage
-from aiogram.webhook.aiohttp_server import setup_application, SimpleRequestHandler
+from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp.web import run_app
 from aiohttp.web_app import Application
 
@@ -19,7 +20,7 @@ from tgbot.misc.keyboards import KeyboardManager
 from tgbot.misc.scheduler import Scheduler
 from tgbot.misc.tmpl_render import TmplRender
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 class TgBot:
@@ -75,7 +76,7 @@ class TgBot:
 
     def run(self) -> None:
         """
-        Runs the bot
+        Runs the bot.
 
         :return: None
         """
@@ -90,12 +91,13 @@ class TgBot:
             setup_application(app, self._dp)
             run_app(app=app, host=self._config.webhook.app_host, port=self._config.webhook.app_port)
         else:
-            run(main=self._dp.start_polling(self._bot))
+            # The aiogram start_polling accepts untyped **kwargs
+            run(main=self._dp.start_polling(self._bot))  # pyright: ignore[reportUnknownMemberType]
 
 
 def main() -> None:
     """
-    Main function
+    Runs the application and logs its start, stop and unhandled errors.
 
     :return: None
     """
@@ -105,8 +107,8 @@ def main() -> None:
         tg_bot.run()
     except (KeyboardInterrupt, SystemExit):
         pass
-    except Exception as exc:
-        logger.critical(f"Unhandled error: {repr(exc)}")
+    except Exception as exc:  # noqa: BLE001 - the last resort: logs whatever stopped the bot
+        logger.critical(f"Unhandled error: {exc!r}")
     finally:
         logger.info("Bot stopped!")
 

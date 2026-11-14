@@ -1,6 +1,6 @@
-"""This module contains business logic for profile-related functionality."""
+"""Business logic for profile-related functionality."""
 
-from aiogram.types import FSInputFile, Message
+from aiogram.types import FSInputFile, Message, User
 
 from tgbot.config import Config
 from tgbot.misc.keyboards import KeyboardManager
@@ -39,8 +39,9 @@ class ProfileService(BaseService):
         :param message: The incoming message from the user.
         :return: None
         """
-        data: dict[str, str] = {"username": message.from_user.first_name}
-        text: str = await self._tmpl.render(tmpl=self._cmd_start, locale=message.from_user.language_code, data=data)
+        user: User | None = message.from_user
+        data: dict[str, str] = {"username": user.first_name if user is not None else ""}
+        text: str = await self._tmpl.render(tmpl=self._cmd_start, locale=self._locale(user=user), data=data)
         await message.answer(text=text)
 
     async def help(self, message: Message) -> None:
@@ -50,6 +51,7 @@ class ProfileService(BaseService):
         :param message: The incoming message from the user.
         :return: None
         """
-        data: dict[str, str] = {"username": message.from_user.first_name}
-        caption: str = await self._tmpl.render(tmpl=self._cmd_help, locale=message.from_user.language_code, data=data)
+        user: User | None = message.from_user
+        data: dict[str, str] = {"username": user.first_name if user is not None else ""}
+        caption: str = await self._tmpl.render(tmpl=self._cmd_help, locale=self._locale(user=user), data=data)
         await message.answer_photo(photo=self._bot_logo, caption=caption)

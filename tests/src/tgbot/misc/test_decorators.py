@@ -1,7 +1,6 @@
-"""Unit tests for src/tgbot/misc/decorators.py"""
+"""Unit tests for src/tgbot/misc/decorators.py."""
 
-# pylint: disable=protected-access
-# pylint: disable=redefined-outer-name
+# ruff: noqa: PLR2004, S101
 
 from asyncio import CancelledError
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,177 +13,146 @@ from tgbot.misc.decorators import handle_exc, handle_telegram_exc
 __all__: tuple = ()
 
 
-@pytest.fixture
-def mock_self() -> MagicMock:
-    """
-    Fixture to create a mock self object.
-
-    :return: A mocked self object simulating Broadcaster.
-    """
-    self_obj: MagicMock = MagicMock()
-    return self_obj
-
-
 @pytest.mark.asyncio
-async def test_handle_telegram_exc_no_exception(mock_self: MagicMock) -> None:
+async def test_handle_telegram_exc_no_exception() -> None:
     """
     Test handle_telegram_exc decorator when no exception is raised.
 
-    :param mock_self: Fixture providing a mock self object.
     :return: None
     """
 
-    # noinspection PyUnusedLocal
     @handle_telegram_exc
-    async def test_func(self: MagicMock) -> int:
+    async def test_func() -> int:
         """
         Test function that returns a value without raising an exception.
 
-        :param self: Mocked self object with _db.
         :return: Integer value.
         """
         return 10
 
-    result: int = await test_func(self=mock_self)
+    result: int = await test_func()
     assert result == 10
 
 
 @pytest.mark.asyncio
-async def test_handle_telegram_exc_bad_request(mock_self: MagicMock) -> None:
+async def test_handle_telegram_exc_bad_request() -> None:
     """
     Test handle_telegram_exc decorator with TelegramBadRequest exception.
 
-    :param mock_self: Mocked self object with _db.
     :return: None
     """
 
-    # noinspection PyUnusedLocal
     @handle_telegram_exc
-    async def test_func(self: MagicMock, user_id: int) -> None:
+    async def test_func(user_id: int) -> None:
         """
         Test function that raises TelegramBadRequest.
 
-        :param self: Mocked self object with _db.
         :param user_id: User ID.
         :return: None
         :raises TelegramBadRequest: Simulated TelegramBadRequest exception.
         """
-        raise TelegramBadRequest(message="Bad request", method=MagicMock())
+        raise TelegramBadRequest(message=f"Bad request for {user_id}", method=MagicMock())
 
-    result: int = await test_func(self=mock_self, user_id=123)
+    result: int | None = await test_func(user_id=123)
     assert result == 0
 
 
 @pytest.mark.asyncio
-async def test_handle_telegram_exc_forbidden_other(mock_self: MagicMock) -> None:
+async def test_handle_telegram_exc_forbidden_other() -> None:
     """
     Test handle_telegram_exc decorator with TelegramForbiddenError for other reasons.
 
-    :param mock_self: Mocked self object with _db.
     :return: None
     """
 
-    # noinspection PyUnusedLocal
     @handle_telegram_exc
-    async def test_func(self: MagicMock, user_id: int) -> None:
+    async def test_func(user_id: int) -> None:
         """
         Test function that raises TelegramForbiddenError without bot blocked message.
 
-        :param self: Mocked self object with _db.
         :param user_id: User ID.
         :return: None
         :raises TelegramForbiddenError: Simulated TelegramForbiddenError exception.
         """
-        raise TelegramForbiddenError(message="Forbidden: other reason", method=MagicMock())
+        raise TelegramForbiddenError(message=f"Forbidden for {user_id}: other reason", method=MagicMock())
 
-    result: int = await test_func(self=mock_self, user_id=789)
+    result: int | None = await test_func(user_id=789)
     assert result == 0
-    mock_self._db.del_user.assert_not_called()
 
 
 @pytest.mark.asyncio
 @patch(target="tgbot.misc.decorators.sleep", new_callable=AsyncMock)
-async def test_handle_telegram_exc_retry_after(mock_sleep: AsyncMock, mock_self: MagicMock) -> None:
+async def test_handle_telegram_exc_retry_after(mock_sleep: AsyncMock) -> None:
     """
     Test handle_telegram_exc decorator with TelegramRetryAfter exception and retry logic.
 
     :param mock_sleep: A mocked sleep function
-    :param mock_self: Mocked self object with _db.
     :return: None
     """
-    call_count: int = 0
+    calls: list[int] = []
 
-    # noinspection PyUnusedLocal
     @handle_telegram_exc
-    async def test_func(self: MagicMock, user_id: int) -> int:
+    async def test_func(user_id: int) -> int:
         """
         Test function that raises TelegramRetryAfter on first call and succeeds on retry.
 
-        :param self: Mocked self object with _db.
         :param user_id: User ID
         :return: Integer value
         :raises TelegramRetryAfter: Simulated TelegramRetryAfter exception
         """
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
+        calls.append(user_id)
+        if len(calls) == 1:
             raise TelegramRetryAfter(retry_after=1, method=MagicMock(), message="Flood limit")
         return 10
 
-    result: int = await test_func(self=mock_self, user_id=789)
+    result: int = await test_func(user_id=789)
     assert result == 10
-    assert call_count == 2
+    assert calls == [789, 789]
     mock_sleep.assert_called_once_with(delay=1)
 
 
 @pytest.mark.asyncio
-async def test_handle_telegram_exc_api_error(mock_self: MagicMock) -> None:
+async def test_handle_telegram_exc_api_error() -> None:
     """
     Test handle_telegram_exc decorator with TelegramAPIError exception.
 
-    :param mock_self: Mocked self object with _db.
     :return: None
     """
 
-    # noinspection PyUnusedLocal
     @handle_telegram_exc
-    async def test_func(self: MagicMock, user_id: int) -> None:
+    async def test_func(user_id: int) -> None:
         """
         Test function that raises TelegramAPIError.
 
-        :param self: Mocked self object with _db.
         :param user_id: User ID
         :return: None
         :raises TelegramAPIError: Simulated TelegramAPIError exception
         """
-        raise TelegramAPIError(message="API error", method=MagicMock())
+        raise TelegramAPIError(message=f"API error for {user_id}", method=MagicMock())
 
-    result: int = await test_func(self=mock_self, user_id=999)
+    result: int | None = await test_func(user_id=999)
     assert result == 0
 
 
 @pytest.mark.asyncio
-async def test_handle_telegram_exc_no_user_id(mock_self: MagicMock) -> None:
+async def test_handle_telegram_exc_no_user_id() -> None:
     """
     Test handle_telegram_exc decorator when user_id is not provided.
 
-    :param mock_self: Mocked self object with _db.
     :return: None
     """
 
-    # noinspection PyUnusedLocal
     @handle_telegram_exc
-    async def test_func(self: MagicMock) -> None:
+    async def test_func() -> None:
         """
         Test function that raises TelegramAPIError without user_id.
 
-        :param self: Mocked self object with _db.
         :return: None
         :raises TelegramAPIError: Simulated TelegramAPIError exception
         """
         raise TelegramAPIError(message="API error", method=MagicMock())
 
-    result: int = await test_func(self=mock_self)
+    result: int | None = await test_func()
     assert result == 0
 
 
@@ -205,7 +173,7 @@ async def test_handle_exc_no_exception() -> None:
         """
         return 20
 
-    result: int = await test_func()
+    result: int | None = await test_func()
     assert result == 20
 
 

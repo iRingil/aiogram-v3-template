@@ -1,11 +1,12 @@
-"""Unit tests for src/tgbot/config.py"""
+"""Unit tests for src/tgbot/config.py."""
 
-# pylint: disable=redefined-outer-name
+# ruff: noqa: PLR2004, S101, S105
 
 import os
 import sys
+from collections.abc import Generator
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 import pytest
 from environs import EnvError
@@ -35,7 +36,7 @@ ENV_FILE_CONTENT: str = """
 
 # region Fixtures
 @pytest.fixture
-def env_file_path(tmp_path: Path) -> Generator[Path, None, None]:
+def env_file_path(tmp_path: Path) -> Generator[Path]:
     """
     Fixture to create a .env file one level above the base_dir (tmp_path).
 
@@ -51,19 +52,20 @@ def env_file_path(tmp_path: Path) -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def config_instance(tmp_path: Path, env_file_path: Path) -> Config:
+def config_instance(tmp_path: Path, request: pytest.FixtureRequest) -> Config:
     """
     Fixture to create a Config instance with a populated .env file.
 
     :param tmp_path: Temporary directory provided by pytest.
-    :param env_file_path: Fixture ensuring the .env file exists.
+    :param request: Pytest request object, used to create the .env file first.
     :return: Config instance with loaded environment variables.
     """
+    request.getfixturevalue("env_file_path")
     return Config(base_dir=tmp_path)
 
 
 @pytest.fixture(autouse=True)
-def clear_env() -> Generator[None, None, None]:
+def clear_env() -> Generator[None]:
     """
     Fixture to clear relevant environment variables before each test.
 
@@ -147,15 +149,15 @@ def test_logger_output_to_file(tmp_path: Path) -> None:
 
 
 # region Tests for Config
-@pytest.mark.parametrize("debug, exp_tb_limit", [(True, 1000), (False, 0)])  # sys.tracebacklimit default is 1000
-def test_config_tracebacklimit(debug: bool, exp_tb_limit: int, tmp_path: Path, env_file_path: Path) -> None:
+@pytest.mark.parametrize(("debug", "exp_tb_limit"), [(True, 1000), (False, 0)])  # sys.tracebacklimit default is 1000
+@pytest.mark.usefixtures("env_file_path")
+def test_config_tracebacklimit(*, debug: bool, exp_tb_limit: int, tmp_path: Path) -> None:
     """
     Test that Config sets sys.tracebacklimit based on the debug flag passed to __init__.
 
     :param debug: Debug mode flag to pass to Config.
     :param exp_tb_limit: Expected tracebacklimit value.
     :param tmp_path: Temporary directory provided by pytest.
-    :param env_file_path: Fixture ensuring the .env file exists.
     :return: None
     """
     original_limit: int = getattr(sys, "tracebacklimit", 1000)
@@ -176,7 +178,7 @@ def test_config_init_no_env_file(tmp_path: Path) -> None:
     env_p: Path = Path(tmp_path.parent, ".env")
     if env_p.exists():
         env_p.unlink()
-    with pytest.raises(expected_exception=FileNotFoundError, match="The .env file was not found"):
+    with pytest.raises(expected_exception=FileNotFoundError, match=r"The \.env file was not found"):
         Config(base_dir=tmp_path)
 
 
@@ -214,12 +216,11 @@ def test_config_paths(config_instance: Config, tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "use_redis, use_redis_socket, expect_redis",
+    ("use_redis", "use_redis_socket", "expect_redis"),
     [(False, False, False), (True, False, True), (True, True, True), (False, True, False)],
 )
-def test_config_redis(
-    use_redis: bool, use_redis_socket: bool, expect_redis: bool, tmp_path: Path, env_file_path: Path
-) -> None:
+@pytest.mark.usefixtures("env_file_path")
+def test_config_redis(*, use_redis: bool, use_redis_socket: bool, expect_redis: bool, tmp_path: Path) -> None:
     """
     Test that Config initializes redis correctly based on constructor flags.
 
@@ -227,7 +228,6 @@ def test_config_redis(
     :param use_redis_socket: Flag to enable/disable redis socket.
     :param expect_redis: Whether redis should be initialized (True) or not (False).
     :param tmp_path: Temporary directory provided by pytest.
-    :param env_file_path: Fixture ensuring the .env file exists.
     :return: None
     """
     config: Config = Config(base_dir=tmp_path, use_redis=use_redis, use_redis_socket=use_redis_socket)
@@ -249,15 +249,15 @@ def test_config_redis(
         assert config.redis is None
 
 
-@pytest.mark.parametrize("use_webhook, expect_webhook", [(False, False), (True, True)])
-def test_config_webhook(use_webhook: bool, expect_webhook: bool, tmp_path: Path, env_file_path: Path) -> None:
+@pytest.mark.parametrize(("use_webhook", "expect_webhook"), [(False, False), (True, True)])
+@pytest.mark.usefixtures("env_file_path")
+def test_config_webhook(*, use_webhook: bool, expect_webhook: bool, tmp_path: Path) -> None:
     """
     Test that Config initializes webhook correctly based on the constructor flag.
 
     :param use_webhook: Flag to enable/disable webhook usage.
     :param expect_webhook: Whether webhook should be initialized (True) or not (False).
     :param tmp_path: Temporary directory provided by pytest.
-    :param env_file_path: Fixture ensuring the .env file exists.
     :return: None
     """
     config: Config = Config(base_dir=tmp_path, use_webhook=use_webhook)
@@ -292,7 +292,7 @@ def _create_modified_env(tmp_path: Path, vars_to_remove: list[str]) -> None:
 
 
 @pytest.mark.parametrize(
-    "env_vars_to_remove, error_message_match",
+    ("env_vars_to_remove", "error_message_match"),
     [
         (["ADMIN_IDS"], "Admin IDs not found"),
         (["BOT_TOKEN"], "BOT_TOKEN not found"),

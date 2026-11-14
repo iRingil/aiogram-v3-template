@@ -1,6 +1,6 @@
 """The module allows running tasks on a schedule."""
 
-from datetime import timezone
+from datetime import UTC
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -22,14 +22,14 @@ class Scheduler:
         :param broadcaster: Broadcaster object for broadcasting messages.
         :param tmpl: TmplRender object for rendering templates.
         """
-        self._scheduler: AsyncIOScheduler = AsyncIOScheduler(timezone=timezone.utc)
+        self._scheduler: AsyncIOScheduler = AsyncIOScheduler(timezone=UTC)
         self._config: Config = config
         self._broadcaster: Broadcaster = broadcaster
         self._tmpl: TmplRender = tmpl
 
     async def schedule(self) -> None:
         """
-        Creates a tasks in the scheduler
+        Creates tasks in the scheduler and starts it.
 
         :return: None
         """

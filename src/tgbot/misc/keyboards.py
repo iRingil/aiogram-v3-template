@@ -1,4 +1,4 @@
-"""This module implements the keyboards used in the bot."""
+"""The keyboards used in the bot."""
 
 from tgbot.misc.tmpl_render import TmplRender
 

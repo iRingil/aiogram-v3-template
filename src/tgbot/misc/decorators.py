@@ -2,9 +2,9 @@
 
 import sys
 from asyncio import CancelledError, sleep
+from collections.abc import Awaitable, Callable, Coroutine
 from functools import wraps
 from traceback import format_exc
-from typing import Any, Callable
 
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 
@@ -13,7 +13,7 @@ from tgbot.config import logger
 __all__: tuple[str, ...] = ("handle_exc", "handle_telegram_exc")
 
 
-def handle_telegram_exc(func: Callable) -> Callable:
+def handle_telegram_exc[**P, R](func: Callable[P, Awaitable[R]]) -> Callable[P, Coroutine[None, None, R | int]]:
     """
     Async decorator to handle Telegram API exceptions.
 
@@ -22,9 +22,9 @@ def handle_telegram_exc(func: Callable) -> Callable:
     """
 
     @wraps(wrapped=func)
-    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R | int:
         """
-        Wrapper function to catch and handle exceptions during the execution of the wrapped function
+        Wrapper function to catch and handle exceptions during the execution of the wrapped function.
 
         :param args: Positional arguments for the wrapped function.
         :param kwargs: Keyword arguments for the wrapped function.
@@ -47,7 +47,7 @@ def handle_telegram_exc(func: Callable) -> Callable:
     return wrapper
 
 
-def handle_exc(func: Callable[..., Any]) -> Callable[..., Any]:
+def handle_exc[**P, R](func: Callable[P, Awaitable[R]]) -> Callable[P, Coroutine[None, None, R | None]]:
     """
     A decorator that catches exceptions in an async function.
 
@@ -56,20 +56,21 @@ def handle_exc(func: Callable[..., Any]) -> Callable[..., Any]:
     """
 
     @wraps(wrapped=func)
-    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R | None:
         """
-        Wraps the decorated async function and handles exceptions
+        Wraps the decorated async function and handles exceptions.
 
-        :param args: positional arguments passed to the wrapped function
-        :param kwargs: keyword arguments passed to the wrapped function
-        :return: the result of the wrapped async function
+        :param args: Positional arguments passed to the wrapped function.
+        :param kwargs: Keyword arguments passed to the wrapped function.
+        :return: The result of the wrapped async function, or None if it raised or was cancelled.
         """
         try:
             return await func(*args, **kwargs)
         except CancelledError:
             pass
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - logs any failure of a background task
             tb: str = f"\n{format_exc()}" if not hasattr(sys, "tracebacklimit") else ""
-            logger.error(f"Task '{func.__name__}' caused an exception: {exc}{tb}")
+            logger.error(f"Task '{wrapper.__name__}' caused an exception: {exc}{tb}")
+        return None
 
     return wrapper

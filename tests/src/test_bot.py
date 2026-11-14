@@ -1,10 +1,9 @@
-# type: ignore
-"""Unit tests for src/bot.py"""
+"""Unit tests for src/bot.py."""
 
-# pylint: disable=protected-access
-# pylint: disable=redefined-outer-name
+# ruff: noqa: S101, S105, S106, SLF001
 
-from asyncio import AbstractEventLoop, sleep
+from asyncio import sleep
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,7 +12,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage
 
 # noinspection PyProtectedMember
-from bot import main, TgBot
+from bot import TgBot, main
+from tests.helpers import mocked
 from tgbot.config import Config
 from tgbot.misc.broadcaster import Broadcaster
 from tgbot.misc.keyboards import KeyboardManager
@@ -23,27 +23,18 @@ from tgbot.misc.tmpl_render import TmplRender
 __all__: tuple = ()
 
 
-@pytest.fixture
-def mock_loop() -> AbstractEventLoop:
-    """
-    Fixture to provide a mock event loop.
-
-    :return: Mock event loop instance.
-    """
-    return AsyncMock()
-
-
 # noinspection PyProtectedMember
 @pytest.fixture
-def tg_bot() -> TgBot:
+def tg_bot() -> Iterator[TgBot]:
     """
     Provide a fresh TgBot instance for each test with mocked dependencies, using RedisStorage.
 
     :return: TgBot instance.
     """
-    with patch(target="bot.Config", return_value=MagicMock(spec=Config)) as mock_config, patch(
-        target="bot.Bot", return_value=MagicMock(spec=Bot)
-    ) as mock_bot:
+    with (
+        patch(target="bot.Config", return_value=MagicMock(spec=Config)) as mock_config,
+        patch(target="bot.Bot", return_value=MagicMock(spec=Bot)) as mock_bot,
+    ):
         mock_config.return_value.token = "mock_token"
         mock_config.return_value.redis = MagicMock()  # Enable Redis to use RedisStorage
         mock_config.return_value.admins = [123, 456]
@@ -93,7 +84,7 @@ async def test_on_startup_polling(tg_bot: TgBot) -> None:
     tg_bot._scheduler.schedule = AsyncMock()
     mock_bot_commands: MagicMock = MagicMock()
     mock_bot_commands.set_commands = AsyncMock()
-    tg_bot._config.webhook = None
+    mocked(tg_bot._config).webhook = None
     with patch(target="bot.BotCommands", return_value=mock_bot_commands):
         await tg_bot._on_startup()
     tg_bot._broadcaster.broadcast.assert_called_once_with(
@@ -101,7 +92,7 @@ async def test_on_startup_polling(tg_bot: TgBot) -> None:
     )
     tg_bot._scheduler.schedule.assert_called_once()
     mock_bot_commands.set_commands.assert_called_once()
-    tg_bot._bot.set_webhook.assert_not_called()
+    mocked(tg_bot._bot.set_webhook).assert_not_called()
 
 
 # noinspection PyUnresolvedReferences,PyPropertyAccess
@@ -117,10 +108,9 @@ async def test_on_startup_webhook(tg_bot: TgBot) -> None:
     tg_bot._scheduler.schedule = AsyncMock()
     mock_bot_commands: MagicMock = MagicMock()
     mock_bot_commands.set_commands = AsyncMock()
-    tg_bot._config.webhook = MagicMock()
-    tg_bot._config.webhook.wh_host = "https://example.com"
-    tg_bot._config.webhook.wh_path = "webhook_path"
-    tg_bot._config.webhook.wh_token = "mock_token"
+    mocked(tg_bot._config).webhook = MagicMock(
+        wh_host="https://example.com", wh_path="webhook_path", wh_token="mock_token"
+    )
     with patch(target="bot.BotCommands", return_value=mock_bot_commands):
         await tg_bot._on_startup()
     tg_bot._broadcaster.broadcast.assert_called_once_with(
@@ -128,7 +118,7 @@ async def test_on_startup_webhook(tg_bot: TgBot) -> None:
     )
     tg_bot._scheduler.schedule.assert_called_once()
     mock_bot_commands.set_commands.assert_called_once()
-    tg_bot._bot.set_webhook.assert_called_once_with(
+    mocked(tg_bot._bot.set_webhook).assert_called_once_with(
         url="https://example.com/webhook_path", drop_pending_updates=False, secret_token="mock_token"
     )
 
@@ -143,13 +133,13 @@ async def test_on_shutdown_polling(tg_bot: TgBot) -> None:
     :return: None
     """
     tg_bot._broadcaster.broadcast = AsyncMock()
-    tg_bot._config.webhook = None
+    mocked(tg_bot._config).webhook = None
     await tg_bot._on_shutdown()
     tg_bot._broadcaster.broadcast.assert_called_once_with(
         users_ids=tg_bot._config.admins, msg="Bot was stopped", notify=False
     )
-    tg_bot._bot.delete_webhook.assert_not_called()
-    tg_bot._bot.session.close.assert_called_once()
+    mocked(tg_bot._bot.delete_webhook).assert_not_called()
+    mocked(tg_bot._bot.session.close).assert_called_once()
 
 
 # noinspection PyUnresolvedReferences,PyPropertyAccess
@@ -163,58 +153,59 @@ async def test_on_shutdown_webhook(tg_bot: TgBot) -> None:
     """
     tg_bot._broadcaster.broadcast = AsyncMock()
     tg_bot._bot.delete_webhook = AsyncMock()
-    tg_bot._config.webhook = MagicMock()
+    mocked(tg_bot._config).webhook = MagicMock()
     await tg_bot._on_shutdown()
     tg_bot._broadcaster.broadcast.assert_called_once_with(
         users_ids=tg_bot._config.admins, msg="Bot was stopped", notify=False
     )
     tg_bot._bot.delete_webhook.assert_called_once()
-    tg_bot._bot.session.close.assert_called_once()
+    mocked(tg_bot._bot.session.close).assert_called_once()
 
 
 # noinspection PyPropertyAccess
-def test_run_polling(tg_bot: TgBot, mock_loop: AbstractEventLoop) -> None:
+def test_run_polling(tg_bot: TgBot) -> None:
     """
     Tests the run method in polling mode.
 
     :param tg_bot: Instance of TgBot to test.
-    :param mock_loop: Mock event loop.
     :return: None
     """
-    with patch(target="bot.MainHandler"), patch.object(target=tg_bot._dp, attribute="startup"), patch.object(
-        target=tg_bot._dp, attribute="shutdown"
-    ), patch(target="bot.run") as mock_run:
-        tg_bot._config.webhook = None
+    with (
+        patch(target="bot.MainHandler"),
+        patch.object(target=tg_bot._dp, attribute="startup"),
+        patch.object(target=tg_bot._dp, attribute="shutdown"),
+        patch(target="bot.run") as mock_run,
+    ):
+        mocked(tg_bot._config).webhook = None
         with patch.object(target=tg_bot._dp, attribute="start_polling", return_value=MagicMock()):
             tg_bot.run()
         assert mock_run.call_count == 1
         assert "main" in mock_run.call_args.kwargs
-        tg_bot._dp.startup.register.assert_called_once_with(callback=tg_bot._on_startup)
-        tg_bot._dp.shutdown.register.assert_called_once_with(callback=tg_bot._on_shutdown)
+        mocked(tg_bot._dp.startup.register).assert_called_once_with(callback=tg_bot._on_startup)
+        mocked(tg_bot._dp.shutdown.register).assert_called_once_with(callback=tg_bot._on_shutdown)
 
 
 # noinspection PyPropertyAccess
 @pytest.mark.asyncio
-async def test_run_webhook(tg_bot: TgBot, mock_loop: AbstractEventLoop) -> None:
+async def test_run_webhook(tg_bot: TgBot) -> None:
     """
     Tests the run method in webhook mode.
 
     :param tg_bot: Instance of TgBot to test.
-    :param mock_loop: Mock event loop.
     :return: None
     """
-    with patch(target="bot.MainHandler"), patch.object(target=tg_bot._dp, attribute="startup"), patch.object(
-        target=tg_bot._dp, attribute="shutdown"
-    ), patch(target="bot.run_app") as mock_run_app, patch(target="bot.Application") as mock_app, patch(
-        target="bot.SimpleRequestHandler"
-    ) as mock_handler, patch(
-        target="bot.setup_application"
-    ) as mock_setup:
-        tg_bot._config.webhook = MagicMock()
-        tg_bot._config.webhook.wh_path = "webhook_path"
-        tg_bot._config.webhook.wh_token = "mock_token"
-        tg_bot._config.webhook.app_host = "localhost"
-        tg_bot._config.webhook.app_port = 8080
+    with (
+        patch(target="bot.MainHandler"),
+        patch.object(target=tg_bot._dp, attribute="startup"),
+        patch.object(target=tg_bot._dp, attribute="shutdown"),
+        patch(target="bot.run_app") as mock_run_app,
+        patch(target="bot.Application") as mock_app,
+        patch(target="bot.SimpleRequestHandler") as mock_handler,
+        patch(target="bot.setup_application") as mock_setup,
+    ):
+        mocked(tg_bot._config).webhook = MagicMock(
+            wh_path="webhook_path", wh_token="mock_token", app_host="localhost", app_port=8080
+        )
         tg_bot._on_startup = AsyncMock()
         tg_bot._on_shutdown = AsyncMock()
         tg_bot.run()
@@ -222,16 +213,15 @@ async def test_run_webhook(tg_bot: TgBot, mock_loop: AbstractEventLoop) -> None:
         mock_handler.assert_called_once_with(dispatcher=tg_bot._dp, bot=tg_bot._bot, secret_token="mock_token")
         mock_setup.assert_called_once_with(mock_app.return_value, tg_bot._dp)
         mock_run_app.assert_called_once_with(app=mock_app.return_value, host="localhost", port=8080)
-        tg_bot._dp.startup.register.assert_called_once_with(callback=tg_bot._on_startup)
-        tg_bot._dp.shutdown.register.assert_called_once_with(callback=tg_bot._on_shutdown)
+        mocked(tg_bot._dp.startup.register).assert_called_once_with(callback=tg_bot._on_startup)
+        mocked(tg_bot._dp.shutdown.register).assert_called_once_with(callback=tg_bot._on_shutdown)
 
 
 @pytest.mark.asyncio
-async def test_main(mock_loop: AbstractEventLoop) -> None:
+async def test_main() -> None:
     """
     Tests the main function.
 
-    :param mock_loop: Mock event loop.
     :return: None
     """
     with patch(target="bot.TgBot") as mock_tg_bot, patch(target="bot.logger", new_callable=MagicMock) as mock_logger:
@@ -245,11 +235,10 @@ async def test_main(mock_loop: AbstractEventLoop) -> None:
 
 
 @pytest.mark.asyncio
-async def test_main_with_exception(mock_loop: AbstractEventLoop) -> None:
+async def test_main_with_exception() -> None:
     """
     Tests the main function when an exception occurs.
 
-    :param mock_loop: Mock event loop.
     :return: None
     """
     with patch(target="bot.TgBot") as mock_tg_bot, patch(target="bot.logger", new_callable=MagicMock) as mock_logger:
@@ -264,11 +253,10 @@ async def test_main_with_exception(mock_loop: AbstractEventLoop) -> None:
 
 
 @pytest.mark.asyncio
-async def test_main_with_keyboard_interrupt(mock_loop: AbstractEventLoop) -> None:
+async def test_main_with_keyboard_interrupt() -> None:
     """
     Tests the main function when a KeyboardInterrupt occurs.
 
-    :param mock_loop: Mock event loop.
     :return: None
     """
     with patch(target="bot.TgBot") as mock_tg_bot, patch(target="bot.logger", new_callable=MagicMock) as mock_logger:
@@ -283,11 +271,10 @@ async def test_main_with_keyboard_interrupt(mock_loop: AbstractEventLoop) -> Non
 
 
 @pytest.mark.asyncio
-async def test_main_with_system_exit(mock_loop: AbstractEventLoop) -> None:
+async def test_main_with_system_exit() -> None:
     """
     Tests the main function when a SystemExit occurs.
 
-    :param mock_loop: Mock event loop.
     :return: None
     """
     with patch(target="bot.TgBot") as mock_tg_bot, patch(target="bot.logger", new_callable=MagicMock) as mock_logger:

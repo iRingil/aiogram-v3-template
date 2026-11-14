@@ -1,17 +1,17 @@
 """Setting up the configuration for the application."""
 
 import sys
-from os.path import exists
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from environs import Env, EnvError
 from loguru import logger as _logger
-
-# noinspection PyProtectedMember
-from loguru._logger import Logger
 from redis.asyncio import Redis
 
 from tgbot.misc.dataclasses import Paths, WebhookCredentials
+
+if TYPE_CHECKING:
+    from loguru import Logger  # Exists only in the loguru type stubs
 
 __all__: tuple[str, ...] = ("Config", "logger")
 
@@ -27,7 +27,7 @@ _BASE_DIR: Path = Path(__file__).resolve().parent  # Path settings
 class Logging:
     """Performs logging settings in the application."""
 
-    def __init__(self, debug: bool = _DEBUG, base_dir: Path = _BASE_DIR) -> None:
+    def __init__(self, *, debug: bool = _DEBUG, base_dir: Path = _BASE_DIR) -> None:
         """
         Initialization of necessary parameters.
 
@@ -45,10 +45,10 @@ class Logging:
         _format: str = f"{_time} | {_level} | {_for_debug}{_msg}"
         _logger.add(sink=sys.stderr, level=_log_level, format=_format, colorize=True)
         _logger.add(sink=Path(_log_dir, "tgbot.log"), level=_log_level, format=_format, encoding="utf-8")
-        self._log: Logger = _logger  # type: ignore
+        self._log: Logger = _logger
 
     @property
-    def logger(self) -> Logger:
+    def logger(self) -> "Logger":
         """
         Returns the Logger object.
 
@@ -57,7 +57,7 @@ class Logging:
         return self._log
 
 
-logger: Logger = Logging().logger
+logger: "Logger" = Logging().logger
 
 
 # endregion
@@ -69,6 +69,7 @@ class Config:
 
     def __init__(
         self,
+        *,
         base_dir: Path = _BASE_DIR,
         debug: bool = _DEBUG,
         use_redis: bool = _USE_REDIS,
@@ -88,7 +89,7 @@ class Config:
         if not debug:
             sys.tracebacklimit = 0
         self._env_path: Path = Path(base_dir, "../.env")
-        if not exists(self._env_path):
+        if not self._env_path.exists():
             raise FileNotFoundError(f"The .env file was not found in the path: {self._env_path}")
         self._env: Env = Env()
         self._env.read_env(path=self._env_path, recurse=False)
@@ -115,9 +116,9 @@ class Config:
         :raises EnvError: if the admin IDs are not found in the .env file.
         """
         try:
-            return list(map(int, self._env.list("ADMIN_IDS")))
+            return self._env.list("ADMIN_IDS", subcast=int)
         except EnvError as exc:
-            raise EnvError(f"Admin IDs not found in the .env file: {repr(exc)}") from exc
+            raise EnvError(f"Admin IDs not found in the .env file: {exc!r}") from exc
 
     @staticmethod
     def _get_paths(base_dir: Path) -> Paths:
@@ -145,7 +146,7 @@ class Config:
         """
         return self._paths
 
-    def _get_redis(self, use_redis: bool, use_socket: bool) -> Redis | None:
+    def _get_redis(self, *, use_redis: bool, use_socket: bool) -> Redis | None:
         """
         Returns an instance of the Redis class to connect to the database.
 
@@ -162,14 +163,12 @@ class Config:
             username: str = self._env.str("REDIS_DB_USER")
             if use_socket:
                 unix_socket_path: str = self._env.str("REDIS_SOCKET_PATH")
-                redis: Redis = Redis(db=db, password=password, unix_socket_path=unix_socket_path, username=username)
-                return redis
+                return Redis(db=db, password=password, unix_socket_path=unix_socket_path, username=username)
             host: str = self._env.str("REDIS_HOST")
             port: int = self._env.int("REDIS_PORT")
-            redis = Redis(host=host, port=port, db=db, password=password, username=username)
-            return redis
         except EnvError as exc:
-            raise EnvError(f"Redis credentials not found in the .env file: {repr(exc)}") from exc
+            raise EnvError(f"Redis credentials not found in the .env file: {exc!r}") from exc
+        return Redis(host=host, port=port, db=db, password=password, username=username)
 
     @property
     def redis(self) -> Redis | None:
@@ -190,7 +189,7 @@ class Config:
         try:
             return self._env.str("BOT_TOKEN")
         except EnvError as exc:
-            raise EnvError(f"BOT_TOKEN not found: {repr(exc)}") from exc
+            raise EnvError(f"BOT_TOKEN not found: {exc!r}") from exc
 
     @property
     def token(self) -> str:
@@ -201,7 +200,7 @@ class Config:
         """
         return self._token
 
-    def _get_webhook(self, use_webhook: bool) -> WebhookCredentials | None:
+    def _get_webhook(self, *, use_webhook: bool) -> WebhookCredentials | None:
         """
         Returns the credentials to use webhook.
 
@@ -220,7 +219,7 @@ class Config:
                 app_port=self._env.int("WEBAPP_PORT"),
             )
         except EnvError as exc:
-            raise EnvError(f"Webhook credentials not found in the .env file: {repr(exc)}") from exc
+            raise EnvError(f"Webhook credentials not found in the .env file: {exc!r}") from exc
 
     @property
     def webhook(self) -> WebhookCredentials | None:

@@ -1,8 +1,6 @@
-# type: ignore
-"""Unit tests for src/tgbot/services/profile.py"""
+"""Unit tests for src/tgbot/services/profile.py."""
 
-# pylint: disable=redefined-outer-name
-# pylint: disable=protected-access
+# ruff: noqa: SLF001
 
 from unittest.mock import AsyncMock
 
@@ -10,6 +8,7 @@ import pytest
 from aiogram.types import Message, User
 from pytest_mock import MockerFixture
 
+from tests.helpers import mocked
 from tgbot.config import Config
 from tgbot.misc.keyboards import KeyboardManager
 from tgbot.misc.tmpl_render import TmplRender
@@ -106,10 +105,8 @@ async def test_start(profile_svc: ProfileService, msg: Message, tmpl: TmplRender
     # Act
     await profile_svc.start(message=msg)
     # Assert
-    tmpl.render.assert_called_once_with(
-        tmpl=profile_svc._cmd_start, locale="en", data={"username": msg.from_user.first_name}
-    )
-    msg.answer.assert_called_once_with(text="rendered_text")
+    mocked(tmpl.render).assert_called_once_with(tmpl=profile_svc._cmd_start, locale="en", data={"username": "Test"})
+    mocked(msg.answer).assert_called_once_with(text="rendered_text")
 
 
 # noinspection PyUnresolvedReferences
@@ -126,7 +123,35 @@ async def test_help(profile_svc: ProfileService, msg: Message, tmpl: TmplRender)
     # Act
     await profile_svc.help(message=msg)
     # Assert
-    tmpl.render.assert_called_once_with(
-        tmpl=profile_svc._cmd_help, locale="en", data={"username": msg.from_user.first_name}
-    )
-    msg.answer_photo.assert_called_once_with(photo=profile_svc._bot_logo, caption="rendered_text")
+    mocked(tmpl.render).assert_called_once_with(tmpl=profile_svc._cmd_help, locale="en", data={"username": "Test"})
+    mocked(msg.answer_photo).assert_called_once_with(photo=profile_svc._bot_logo, caption="rendered_text")
+
+
+@pytest.mark.asyncio
+async def test_start_without_user(profile_svc: ProfileService, msg: Message, tmpl: TmplRender) -> None:
+    """
+    Test start method for a message without a sender: the default locale and an empty name are used.
+
+    :param profile_svc: ProfileService instance with mocked dependencies.
+    :param msg: Mocked Message instance.
+    :param tmpl: Mocked TmplRender instance.
+    :return: None
+    """
+    mocked(msg).from_user = None
+    await profile_svc.start(message=msg)
+    mocked(tmpl.render).assert_called_once_with(tmpl=profile_svc._cmd_start, locale="en", data={"username": ""})
+
+
+@pytest.mark.asyncio
+async def test_help_without_user(profile_svc: ProfileService, msg: Message, tmpl: TmplRender) -> None:
+    """
+    Test help method for a message without a sender: the default locale and an empty name are used.
+
+    :param profile_svc: ProfileService instance with mocked dependencies.
+    :param msg: Mocked Message instance.
+    :param tmpl: Mocked TmplRender instance.
+    :return: None
+    """
+    mocked(msg).from_user = None
+    await profile_svc.help(message=msg)
+    mocked(tmpl.render).assert_called_once_with(tmpl=profile_svc._cmd_help, locale="en", data={"username": ""})

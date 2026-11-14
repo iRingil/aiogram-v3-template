@@ -1,5 +1,7 @@
 """The module contains various filters that can be used in handlers."""
 
+from typing import override
+
 from aiogram.filters import BaseFilter
 from aiogram.types import CallbackQuery, Message
 
@@ -18,6 +20,9 @@ class IsAdmin(BaseFilter):
         super().__init__()
         self.admins_ids: list[int] = admins_ids
 
+    # BaseFilter declares __call__ as an abstract method at runtime; PyCharm only sees its TYPE_CHECKING stub
+    # noinspection PyOverrides
+    @override
     async def __call__(self, obj: CallbackQuery | Message) -> bool:
         """
         Returns True if the sender of the message or callback query is a bot administrator.
@@ -25,4 +30,4 @@ class IsAdmin(BaseFilter):
         :param obj: CallbackQuery | Message object.
         :return: True if the sender of the message or callback query is a bot administrator.
         """
-        return obj.from_user.id in self.admins_ids
+        return obj.from_user is not None and obj.from_user.id in self.admins_ids

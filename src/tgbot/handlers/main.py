@@ -1,4 +1,4 @@
-"""This module contains event handlers registration for the bot."""
+"""Event handlers registration for the bot."""
 
 from aiogram import Dispatcher, F, Router
 from aiogram.filters import Command

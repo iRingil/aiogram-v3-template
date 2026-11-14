@@ -1,8 +1,4 @@
-# type: ignore
-"""Unit tests for src/tgbot/handlers/common.py"""
-
-# pylint: disable=redefined-outer-name
-# pylint: disable=protected-access
+"""Unit tests for src/tgbot/handlers/common.py."""
 
 from unittest.mock import AsyncMock, Mock
 

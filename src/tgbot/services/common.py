@@ -1,10 +1,10 @@
-"""This module contains base service classes for shared functionality."""
+"""Base service classes for shared functionality."""
 
 from asyncio import sleep
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, MaybeInaccessibleMessageUnion, Message, User
 
 from tgbot.config import Config
 from tgbot.misc.keyboards import KeyboardManager
@@ -17,10 +17,12 @@ class BaseService:
     """
     Base service class with shared functionality for other services.
 
+    :cvar _DEFAULT_LOCALE: Locale used when Telegram doesn't report the user's language.
     :cvar _msg_expired_action: Path to the expired action template.
     :cvar _msg_unsupported: Path to the unsupported template.
     """
 
+    _DEFAULT_LOCALE: str = "en"
     _msg_expired_action: str = "common/msg_expired_action.jinja2"
     _msg_unsupported: str = "common/msg_unsupported.jinja2"
 
@@ -44,7 +46,7 @@ class BaseService:
         :param message: The incoming message from the user.
         :return: None
         """
-        text: str = await self._tmpl.render(tmpl=self._msg_unsupported, locale=message.from_user.language_code)
+        text: str = await self._tmpl.render(tmpl=self._msg_unsupported, locale=self._locale(user=message.from_user))
         msg: Message = await message.reply(text=text)
         await sleep(delay=3)
         await msg.delete()
@@ -53,11 +55,38 @@ class BaseService:
     # endregion
 
     # region Private methods
+    @classmethod
+    def _locale(cls, user: User | None) -> str:
+        """
+        Returns the language code of a user.
+
+        :param user: Telegram user, if known.
+        :return: Language code reported by Telegram, or the default locale.
+        """
+        return user.language_code if user is not None and user.language_code else cls._DEFAULT_LOCALE
+
+    @staticmethod
+    def _bot_of(event: Message | CallbackQuery) -> Bot:
+        """
+        Returns the bot an incoming message or callback query is bound to.
+
+        aiogram binds every update it dispatches to its bot, so a missing one is a programming error.
+
+        :param event: The incoming message or callback query.
+        :return: The bot.
+        :raises RuntimeError: if the event is not bound to a bot.
+        """
+        bot: Bot | None = event.bot
+        if bot is None:
+            raise RuntimeError("The event is not bound to a bot")
+        return bot
+
     async def _edit_or_send_callback(
         self, call: CallbackQuery, text: str, reply_markup: InlineKeyboardMarkup | None = None
     ) -> Message:
         """
         Edit the existing message from a callback if possible, otherwise send a new one.
+
         Shows a fixed alert "Action expired" if editing fails (e.g., message older than 48 hours).
 
         :param call: The callback query to edit or reply to.
@@ -65,23 +94,29 @@ class BaseService:
         :param reply_markup: The keyboard markup to include (optional).
         :return: The edited message or a new one.
         """
+        origin: MaybeInaccessibleMessageUnion | None = call.message
         # Trying to edit an existing message, if it does not exist or 48 hours have passed, the try will fail
-        try:
-            msg: Message = await call.message.edit_text(text=text, reply_markup=reply_markup)  # type: ignore
-            await call.answer()
-        # If the message is too old, send a new one
-        except TelegramBadRequest as e:
-            # If the message as same as a current content
-            if "the same as a current content" in e.message:
+        if isinstance(origin, Message):
+            try:
+                edited: Message | bool = await origin.edit_text(text=text, reply_markup=reply_markup)
+            except TelegramBadRequest as e:
+                # If the message as same as a current content
+                if "the same as a current content" in e.message:
+                    await call.answer()
+                    return origin
+            else:
                 await call.answer()
-                return call.message  # type: ignore
-            # If the message not as same as a current content
-            alert_text: str = await self._tmpl.render(
-                tmpl=self._msg_expired_action, locale=call.from_user.language_code
+                return edited if isinstance(edited, Message) else origin
+        # If the message is too old, send a new one
+        alert_text: str = await self._tmpl.render(
+            tmpl=self._msg_expired_action, locale=self._locale(user=call.from_user)
+        )
+        await call.answer(text=alert_text, show_alert=True)
+        if origin is None:
+            return await self._bot_of(event=call).send_message(
+                chat_id=call.from_user.id, text=text, reply_markup=reply_markup
             )
-            await call.answer(text=alert_text, show_alert=True)
-            msg = await call.message.answer(text=text, reply_markup=reply_markup)
-        return msg
+        return await origin.answer(text=text, reply_markup=reply_markup)
 
     @staticmethod
     async def _edit_or_send_msg(
@@ -96,15 +131,18 @@ class BaseService:
         :param text: The text to edit into the message.
         :param reply_markup: The keyboard markup to include (optional).
         :return: The edited message or a new one.
+        :raises TypeError: if Telegram returns no message for the edit.
         """
         # Trying to edit an existing message, if it does not exist or 48 hours have passed, the try will fail
         try:
-            msg: Message = await bot.edit_message_text(  # type: ignore
+            edited: Message | bool = await bot.edit_message_text(
                 chat_id=chat_id, message_id=msg_id, text=text, reply_markup=reply_markup
             )
         # If the message is too old, send a new one
         except TelegramBadRequest:
-            msg = await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
-        return msg
+            return await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+        if not isinstance(edited, Message):  # Telegram returns True only for inline messages
+            raise TypeError("Telegram returned no message for an edit by chat and message IDs")
+        return edited
 
     # endregion

@@ -1,4 +1,4 @@
-"""This module contains handlers for profile-related functionality."""
+"""Handlers for profile-related functionality."""
 
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message

@@ -1,17 +1,14 @@
-# type: ignore
-"""Unit tests for src/tgbot/misc/bot_commands.py"""
+"""Unit tests for src/tgbot/misc/bot_commands.py."""
 
-# pylint: disable=protected-access
-# pylint: disable=redefined-outer-name
-# pylint: disable=duplicate-code
+# ruff: noqa: PLR2004, S101, SLF001
 
-from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiogram import Bot
 from aiogram.types import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats, BotCommandScopeChat
 
+from tests.helpers import mocked
 from tgbot.misc.bot_commands import BotCommands
 from tgbot.misc.tmpl_render import TmplRender
 
@@ -19,7 +16,7 @@ __all__: tuple = ()
 
 
 @pytest.fixture
-async def mock_bot() -> AsyncGenerator[Bot, None]:
+async def mock_bot() -> Bot:
     """
     Provides a mocked Bot instance for testing.
 
@@ -27,11 +24,11 @@ async def mock_bot() -> AsyncGenerator[Bot, None]:
     """
     bot: MagicMock = MagicMock(spec=Bot)
     bot.set_my_commands = AsyncMock(return_value=None)
-    yield bot
+    return bot
 
 
 @pytest.fixture
-async def mock_tmpl_render() -> AsyncGenerator[TmplRender, None]:
+async def mock_tmpl_render() -> TmplRender:
     """
     Provides a mocked TmplRender instance for testing.
 
@@ -39,7 +36,7 @@ async def mock_tmpl_render() -> AsyncGenerator[TmplRender, None]:
     """
     tmpl_render: MagicMock = MagicMock(spec=TmplRender)
 
-    def render_side_effect(tmpl: str, locale: str) -> str:
+    def render_side_effect(tmpl: str, **_: str) -> str:
         """
         Side effect for 'render' method of 'TmplRender' mock.
 
@@ -47,7 +44,6 @@ async def mock_tmpl_render() -> AsyncGenerator[TmplRender, None]:
         If the template name is unknown, returns an empty string.
 
         :param tmpl: The template name to render.
-        :param locale: The locale to render for.
         :return: The rendered template as a string.
         """
         if tmpl == "common/cmd_start.jinja2":
@@ -62,7 +58,7 @@ async def mock_tmpl_render() -> AsyncGenerator[TmplRender, None]:
 
     tmpl_render.render = AsyncMock(side_effect=render_side_effect)
     tmpl_render.get_locales = AsyncMock(return_value=["en", "ru"])
-    yield tmpl_render
+    return tmpl_render
 
 
 @pytest.fixture
@@ -111,10 +107,10 @@ async def test_get_commands(bot_commands: BotCommands, mock_tmpl_render: TmplRen
         BotCommand(command="settings", description="Settings description"),
     ]
     assert result == expected
-    assert mock_tmpl_render.render.call_count == 3
-    mock_tmpl_render.render.assert_any_call(tmpl="common/cmd_start.jinja2", locale=lang_code)
-    mock_tmpl_render.render.assert_any_call(tmpl="common/cmd_help.jinja2", locale=lang_code)
-    mock_tmpl_render.render.assert_any_call(tmpl="common/cmd_settings.jinja2", locale=lang_code)
+    assert mocked(mock_tmpl_render.render).call_count == 3
+    mocked(mock_tmpl_render.render).assert_any_call(tmpl="common/cmd_start.jinja2", locale=lang_code)
+    mocked(mock_tmpl_render.render).assert_any_call(tmpl="common/cmd_help.jinja2", locale=lang_code)
+    mocked(mock_tmpl_render.render).assert_any_call(tmpl="common/cmd_settings.jinja2", locale=lang_code)
 
 
 # noinspection PyUnresolvedReferences
@@ -132,7 +128,7 @@ async def test_get_admins_commands(bot_commands: BotCommands, mock_tmpl_render: 
     result: list[BotCommand] = await bot_commands._get_admins_commands(lang_code=lang_code)
     expected: list[BotCommand] = [BotCommand(command="admin", description="Admin description")]
     assert result == expected
-    mock_tmpl_render.render.assert_called_once_with(tmpl="admin/cmd_admin.jinja2", locale=lang_code)
+    mocked(mock_tmpl_render.render).assert_called_once_with(tmpl="admin/cmd_admin.jinja2", locale=lang_code)
 
 
 # noinspection PyUnresolvedReferences
@@ -148,19 +144,19 @@ async def test_set_commands(bot_commands: BotCommands, mock_tmpl_render: TmplRen
     """
     await bot_commands.set_commands()
     # Check group chats commands cleanup
-    mock_bot.set_my_commands.assert_any_call(commands=[], scope=BotCommandScopeAllGroupChats())
+    mocked(mock_bot.set_my_commands).assert_any_call(commands=[], scope=BotCommandScopeAllGroupChats())
     # Check private chats commands cleanup
-    mock_bot.set_my_commands.assert_any_call(commands=[], scope=BotCommandScopeAllPrivateChats())
+    mocked(mock_bot.set_my_commands).assert_any_call(commands=[], scope=BotCommandScopeAllPrivateChats())
     # Check private chats commands for each locale
     expected_commands: list[BotCommand] = [
         BotCommand(command="start", description="Start description"),
         BotCommand(command="help", description="Help description"),
         BotCommand(command="settings", description="Settings description"),
     ]
-    mock_bot.set_my_commands.assert_any_call(
+    mocked(mock_bot.set_my_commands).assert_any_call(
         commands=expected_commands, language_code="en", scope=BotCommandScopeAllPrivateChats()
     )
-    mock_bot.set_my_commands.assert_any_call(
+    mocked(mock_bot.set_my_commands).assert_any_call(
         commands=expected_commands, language_code="ru", scope=BotCommandScopeAllPrivateChats()
     )
     # Check admin commands for each admin ID and locale
@@ -172,12 +168,12 @@ async def test_set_commands(bot_commands: BotCommands, mock_tmpl_render: TmplRen
     ]
     for admin_id in [123, 456]:
         for locale in ["en", "ru"]:
-            mock_bot.set_my_commands.assert_any_call(
+            mocked(mock_bot.set_my_commands).assert_any_call(
                 commands=expected_admin_commands, language_code=locale, scope=BotCommandScopeChat(chat_id=admin_id)
             )
-    assert mock_tmpl_render.get_locales.call_count == 1
-    assert mock_tmpl_render.render.call_count == 10
-    assert mock_bot.set_my_commands.call_count == 8
+    assert mocked(mock_tmpl_render.get_locales).call_count == 1
+    assert mocked(mock_tmpl_render.render).call_count == 10
+    assert mocked(mock_bot.set_my_commands).call_count == 8
 
 
 # noinspection PyUnresolvedReferences
@@ -194,12 +190,12 @@ async def test_set_commands_no_locales(mock_bot: Bot, mock_tmpl_render: TmplRend
     bot_commands: BotCommands = BotCommands(bot=mock_bot, tmpl_render=mock_tmpl_render, admin_ids=[123])
     await bot_commands.set_commands()
     # Check group chats commands cleanup
-    mock_bot.set_my_commands.assert_any_call(commands=[], scope=BotCommandScopeAllGroupChats())
+    mocked(mock_bot.set_my_commands).assert_any_call(commands=[], scope=BotCommandScopeAllGroupChats())
     # Check private chats commands cleanup
-    mock_bot.set_my_commands.assert_any_call(commands=[], scope=BotCommandScopeAllPrivateChats())
+    mocked(mock_bot.set_my_commands).assert_any_call(commands=[], scope=BotCommandScopeAllPrivateChats())
     # Check that no commands are set for private chats or admins
-    assert mock_tmpl_render.render.call_count == 0
-    assert mock_bot.set_my_commands.call_count == 2  # Only cleanup calls
+    assert mocked(mock_tmpl_render.render).call_count == 0
+    assert mocked(mock_bot.set_my_commands).call_count == 2  # Only cleanup calls
 
 
 # noinspection PyUnresolvedReferences
@@ -215,21 +211,21 @@ async def test_set_commands_empty_admin_ids(mock_bot: Bot, mock_tmpl_render: Tmp
     bot_commands: BotCommands = BotCommands(bot=mock_bot, tmpl_render=mock_tmpl_render, admin_ids=[])
     await bot_commands.set_commands()
     # Check group chats commands cleanup
-    mock_bot.set_my_commands.assert_any_call(commands=[], scope=BotCommandScopeAllGroupChats())
+    mocked(mock_bot.set_my_commands).assert_any_call(commands=[], scope=BotCommandScopeAllGroupChats())
     # Check private chats commands cleanup
-    mock_bot.set_my_commands.assert_any_call(commands=[], scope=BotCommandScopeAllPrivateChats())
+    mocked(mock_bot.set_my_commands).assert_any_call(commands=[], scope=BotCommandScopeAllPrivateChats())
     # Check private chats commands for each locale
     expected_commands: list[BotCommand] = [
         BotCommand(command="start", description="Start description"),
         BotCommand(command="help", description="Help description"),
         BotCommand(command="settings", description="Settings description"),
     ]
-    mock_bot.set_my_commands.assert_any_call(
+    mocked(mock_bot.set_my_commands).assert_any_call(
         commands=expected_commands, language_code="en", scope=BotCommandScopeAllPrivateChats()
     )
-    mock_bot.set_my_commands.assert_any_call(
+    mocked(mock_bot.set_my_commands).assert_any_call(
         commands=expected_commands, language_code="ru", scope=BotCommandScopeAllPrivateChats()
     )
-    assert mock_tmpl_render.get_locales.call_count == 1
-    assert mock_tmpl_render.render.call_count == 6  # 3 per locale (en, ru)
-    assert mock_bot.set_my_commands.call_count == 4  # 1 group + 1 private + 2 locales
+    assert mocked(mock_tmpl_render.get_locales).call_count == 1
+    assert mocked(mock_tmpl_render.render).call_count == 6  # 3 per locale (en, ru)
+    assert mocked(mock_bot.set_my_commands).call_count == 4  # 1 group + 1 private + 2 locales

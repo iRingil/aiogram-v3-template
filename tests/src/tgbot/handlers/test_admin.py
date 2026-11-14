@@ -1,8 +1,6 @@
-# type: ignore
-"""Unit tests for src/tgbot/handlers/admin.py"""
+"""Unit tests for src/tgbot/handlers/admin.py."""
 
-# pylint: disable=redefined-outer-name
-# pylint: disable=protected-access
+# ruff: noqa: SLF001
 
 from unittest.mock import AsyncMock, Mock
 
@@ -11,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message
 
+from tests.helpers import mocked
 from tgbot.handlers.admin import AdminHandler
 from tgbot.services.admin import AdminService
 
@@ -68,4 +67,4 @@ async def test_cmd_admin(admin_handler_fixture: AdminHandler, mock_state: FSMCon
     message.delete.assert_called_once()
     mock_state.clear.assert_called_once()
     # noinspection PyUnresolvedReferences
-    admin_handler_fixture._service.admin_menu.assert_called_once_with(message=message)
+    mocked(admin_handler_fixture._service.admin_menu).assert_called_once_with(message=message)

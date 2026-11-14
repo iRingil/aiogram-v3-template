@@ -1,11 +1,15 @@
 """Module for rendering Jinja2 templates used to display messages in the bot."""
 
-from pathlib import Path
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 from babel.support import Translations
 from jinja2 import Environment, FileSystemLoader
 
 from tgbot.misc.dataclasses import Paths
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 __all__: tuple[str] = ("TmplRender",)
 
@@ -19,7 +23,8 @@ class TmplRender:
 
         :param paths: Paths object.
         """
-        self._env: Environment = Environment(
+        # Telegram HTML: user values are escaped explicitly with |e in the templates
+        self._env: Environment = Environment(  # noqa: S701
             trim_blocks=True,
             lstrip_blocks=True,
             extensions=["jinja2.ext.i18n"],
@@ -37,7 +42,7 @@ class TmplRender:
         return [folder.name for folder in self._locale.iterdir() if folder.is_dir()]
 
     @staticmethod
-    async def _smart_trunc(html: str, max_len: int = 4096) -> str:
+    async def _smart_trunc(html: str, max_len: int = 4096) -> str:  # noqa: C901 - a single-pass tag scanner
         """
         Trims the HTML string to the first unclosed tag if it exceeds max_len, or truncates plain text.
 
@@ -80,7 +85,9 @@ class TmplRender:
                 pos += 1
         return suffix if not tag_stack else html[: tag_stack[0][1]] + suffix
 
-    async def render(self, tmpl: str, locale: str, data: dict | None = None, max_len: int = 4096) -> str:
+    async def render(
+        self, tmpl: str, locale: str, data: Mapping[str, object] | None = None, max_len: int = 4096
+    ) -> str:
         """
         Returns the rendered template, based on the passed data, truncated if necessary.
 
@@ -90,8 +97,10 @@ class TmplRender:
         :param max_len: Maximum length of the rendered text (default: 4096).
         :return: Rendered template as string, truncated if longer than max_len.
         """
-        data_to_render: dict = data or {}
-        self._env.install_gettext_translations(  # type: ignore # pylint: disable=no-member
+        data_to_render: Mapping[str, object] = data or {}
+        # Added to the environment at runtime by the jinja2.ext.i18n extension
+        # noinspection PyUnresolvedReferences
+        self._env.install_gettext_translations(  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
             Translations.load(dirname=self._locale, locales=locale)
         )
         rendered_data: str = await self._env.get_template(name=tmpl).render_async(**data_to_render)

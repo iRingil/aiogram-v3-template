@@ -1,4 +1,4 @@
-"""This module contains business logic for admin-related functionality."""
+"""Business logic for admin-related functionality."""
 
 from aiogram.types import Message
 
@@ -40,7 +40,7 @@ class AdminService(BaseService):
         :param message: The incoming message from the user.
         :return: None
         """
-        text: str = await self._tmpl.render(tmpl=self._msg_admin, locale=message.from_user.language_code)
+        text: str = await self._tmpl.render(tmpl=self._msg_admin, locale=self._locale(user=message.from_user))
         await message.answer(text=text)
 
     # endregion

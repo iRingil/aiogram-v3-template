@@ -1,4 +1,4 @@
-"""This module contains common handlers for general bot functionality."""
+"""Common handlers for general bot functionality."""
 
 from aiogram.types import Message
 

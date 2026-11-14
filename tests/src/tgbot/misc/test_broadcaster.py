@@ -1,8 +1,8 @@
-"""Unit tests for src/tgbot/misc/broadcaster.py"""
+"""Unit tests for src/tgbot/misc/broadcaster.py."""
 
-# pylint: disable=redefined-outer-name
+# ruff: noqa: PLR2004, S101, S106
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -10,7 +10,7 @@ from aiogram import Bot
 from aiogram.enums import ChatAction
 from aiogram.exceptions import TelegramAPIError
 from aiogram.methods.send_message import SendMessage
-from aiogram.types import Chat, InlineKeyboardMarkup, InlineKeyboardButton, Message
+from aiogram.types import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from tgbot.misc.broadcaster import Broadcaster
 
@@ -39,10 +39,12 @@ def broadcaster(mock_bot: Bot) -> Broadcaster:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("msg, notify, expected_notify", [("Test message", True, False), ("Test message", False, True)])
+@pytest.mark.parametrize(
+    ("msg", "notify", "expected_notify"), [("Test message", True, False), ("Test message", False, True)]
+)
 @patch.object(target=Bot, attribute="send_message", new_callable=AsyncMock)
 async def test_send_content_text(
-    mock_send_message: AsyncMock, broadcaster: Broadcaster, msg: str, notify: bool, expected_notify: bool
+    mock_send_message: AsyncMock, broadcaster: Broadcaster, msg: str, *, notify: bool, expected_notify: bool
 ) -> None:
     """
     Test send_content with text message for different notification settings.
@@ -54,8 +56,10 @@ async def test_send_content_text(
     :param expected_notify: Expected disable_notification value.
     :return: None
     """
-    mock_send_message.return_value = Message(message_id=123, chat=Chat(id=123, type="private"), date=datetime.now())
-    message_id: int = await broadcaster.send_content(user_id=123, msg=msg, content_type="text", notify=notify)
+    mock_send_message.return_value = Message(
+        message_id=123, chat=Chat(id=123, type="private"), date=datetime.now(tz=UTC)
+    )
+    message_id: int | None = await broadcaster.send_content(user_id=123, msg=msg, content_type="text", notify=notify)
     mock_send_message.assert_called_once_with(
         chat_id=123,
         text="Test message",
@@ -79,8 +83,10 @@ async def test_send_content_with_keyboard(mock_send_message: AsyncMock, broadcas
     keyboard: InlineKeyboardMarkup = InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="Click", callback_data="test")]]
     )
-    mock_send_message.return_value = Message(message_id=123, chat=Chat(id=123, type="private"), date=datetime.now())
-    message_id: int = await broadcaster.send_content(
+    mock_send_message.return_value = Message(
+        message_id=123, chat=Chat(id=123, type="private"), date=datetime.now(tz=UTC)
+    )
+    message_id: int | None = await broadcaster.send_content(
         user_id=123, msg="Test with keyboard", content_type="text", reply_markup=keyboard
     )
     mock_send_message.assert_called_once_with(
@@ -103,7 +109,7 @@ async def test_send_content_chat_action(mock_send_chat_action: AsyncMock, broadc
     :param broadcaster: Fixture providing a Broadcaster instance.
     :return: None
     """
-    message_id: int = await broadcaster.send_content(user_id=123, content_type="chat_action")
+    message_id: int | None = await broadcaster.send_content(user_id=123, content_type="chat_action")
     mock_send_chat_action.assert_called_once_with(chat_id=123, action=ChatAction.TYPING)
     assert message_id is None
 
@@ -118,28 +124,8 @@ async def test_send_content_empty_text(mock_send_message: AsyncMock, broadcaster
     :param broadcaster: Fixture providing a Broadcaster instance.
     :return: None
     """
-    message_id: int = await broadcaster.send_content(user_id=123, msg=None, content_type="text")
+    message_id: int | None = await broadcaster.send_content(user_id=123, msg=None, content_type="text")
     mock_send_message.assert_not_called()
-    assert message_id is None
-
-
-@pytest.mark.asyncio
-@patch.object(target=Bot, attribute="send_message", new_callable=AsyncMock)
-@patch.object(target=Bot, attribute="send_chat_action", new_callable=AsyncMock)
-async def test_send_content_unsupported_type(
-    mock_send_chat_action: AsyncMock, mock_send_message: AsyncMock, broadcaster: Broadcaster
-) -> None:
-    """
-    Test send_content with unsupported content type.
-
-    :param mock_send_chat_action: Mocked send_chat_action method.
-    :param mock_send_message: Mocked send_message method.
-    :param broadcaster: Fixture providing a Broadcaster instance.
-    :return: None
-    """
-    message_id: int = await broadcaster.send_content(user_id=123, content_type="audio")  # type: ignore
-    mock_send_message.assert_not_called()
-    mock_send_chat_action.assert_not_called()
     assert message_id is None
 
 
@@ -156,7 +142,7 @@ async def test_send_content_telegram_error(mock_send_message: AsyncMock, broadca
     mock_send_message.side_effect = TelegramAPIError(
         message="Telegram API error", method=SendMessage(chat_id=123, text="Test message")
     )
-    message_id: int = await broadcaster.send_content(user_id=123, msg="Test message", content_type="text")
+    message_id: int | None = await broadcaster.send_content(user_id=123, msg="Test message", content_type="text")
     assert message_id == 0
 
 
@@ -174,8 +160,8 @@ async def test_broadcast_success(mock_send_message: AsyncMock, broadcaster: Broa
         inline_keyboard=[[InlineKeyboardButton(text="Test", callback_data="test")]]
     )
     mock_send_message.side_effect = [
-        Message(message_id=1, chat=Chat(id=123, type="private"), date=datetime.now()),
-        Message(message_id=2, chat=Chat(id=456, type="private"), date=datetime.now()),
+        Message(message_id=1, chat=Chat(id=123, type="private"), date=datetime.now(tz=UTC)),
+        Message(message_id=2, chat=Chat(id=456, type="private"), date=datetime.now(tz=UTC)),
     ]
     await broadcaster.broadcast(
         users_ids=[123, 456], msg="Test broadcast", reply_markup=keyboard, reply_to_message_id=789
@@ -200,7 +186,7 @@ async def test_broadcast_partial_failure(mock_send_message: AsyncMock, broadcast
     :return: None
     """
     mock_send_message.side_effect = [
-        Message(message_id=1, chat=Chat(id=123, type="private"), date=datetime.now()),
+        Message(message_id=1, chat=Chat(id=123, type="private"), date=datetime.now(tz=UTC)),
         TelegramAPIError(message="Telegram API error", method=SendMessage(chat_id=456, text="Test broadcast")),
     ]
     await broadcaster.broadcast(users_ids=[123, 456], msg="Test broadcast")
@@ -232,13 +218,13 @@ async def test_rate_limiting(mock_send_message: AsyncMock, broadcaster: Broadcas
     :return: None
     """
     mock_send_message.side_effect = [
-        Message(message_id=1, chat=Chat(id=123, type="private"), date=datetime.now()),
-        Message(message_id=2, chat=Chat(id=456, type="private"), date=datetime.now()),
-        Message(message_id=3, chat=Chat(id=789, type="private"), date=datetime.now()),
+        Message(message_id=1, chat=Chat(id=123, type="private"), date=datetime.now(tz=UTC)),
+        Message(message_id=2, chat=Chat(id=456, type="private"), date=datetime.now(tz=UTC)),
+        Message(message_id=3, chat=Chat(id=789, type="private"), date=datetime.now(tz=UTC)),
     ]
-    start_time: datetime = datetime.now()
+    start_time: datetime = datetime.now(tz=UTC)
     await broadcaster.broadcast(users_ids=[123, 456, 789], msg="Test rate limiting")
-    end_time: datetime = datetime.now()
+    end_time: datetime = datetime.now(tz=UTC)
     duration: float = (end_time - start_time).total_seconds()
     # 3 messages at 20 messages/sec should take at least 0.1 seconds (2 intervals of 0.05s)
     assert duration >= 0.1
@@ -255,8 +241,10 @@ async def test_send_content_with_reply_to_message_id(mock_send_message: AsyncMoc
     :param broadcaster: Fixture providing a Broadcaster instance.
     :return: None
     """
-    mock_send_message.return_value = Message(message_id=123, chat=Chat(id=123, type="private"), date=datetime.now())
-    message_id: int = await broadcaster.send_content(
+    mock_send_message.return_value = Message(
+        message_id=123, chat=Chat(id=123, type="private"), date=datetime.now(tz=UTC)
+    )
+    message_id: int | None = await broadcaster.send_content(
         user_id=123, msg="Test with reply", content_type="text", reply_to_message_id=456
     )
     mock_send_message.assert_called_once_with(

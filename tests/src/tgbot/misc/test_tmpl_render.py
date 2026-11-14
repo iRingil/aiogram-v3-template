@@ -1,13 +1,12 @@
-"""Unit tests for src/tgbot/misc/tmpl_render.py"""
+"""Unit tests for src/tgbot/misc/tmpl_render.py."""
 
-# pylint: disable=duplicate-code
-# pylint: disable=protected-access
-# pylint: disable=redefined-outer-name
+# ruff: noqa: S101, SLF001
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from jinja2 import FileSystemLoader, TemplateNotFound
 
 from tgbot.misc.dataclasses import Paths
 from tgbot.misc.tmpl_render import TmplRender
@@ -34,6 +33,41 @@ def mock_paths(tmp_path: Path) -> Paths:
     return Paths(locale=locale_path, bot_logo=logo_path, temp=temp_path, tmpl=tmpl_path)
 
 
+def make_locales(paths: Paths, *names: str) -> None:
+    """
+    Creates the folders of the given locales.
+
+    :param paths: Paths object with mock directories.
+    :param names: Language codes.
+    :return: None
+    """
+    for name in names:
+        Path(paths.locale, name).mkdir(exist_ok=True)
+
+
+def write_template(paths: Paths, text: str) -> None:
+    """
+    Writes the 'test.txt' template and creates the 'en' locale folder.
+
+    :param paths: Paths object with mock directories.
+    :param text: Template source.
+    :return: None
+    """
+    Path(paths.tmpl, "test.txt").write_text(data=text, encoding="utf-8")
+    make_locales(paths, "en")
+
+
+def remove_locales(paths: Paths) -> None:
+    """
+    Removes every locale folder.
+
+    :param paths: Paths object with mock directories.
+    :return: None
+    """
+    for folder in paths.locale.iterdir():
+        folder.rmdir()
+
+
 @pytest.fixture
 def tmpl(mock_paths: Paths) -> TmplRender:
     """
@@ -57,8 +91,8 @@ async def test_template_renderer_init(mock_paths: Paths) -> None:
     assert renderer._env.trim_blocks is True
     assert renderer._env.lstrip_blocks is True
     assert "jinja2.ext.InternationalizationExtension" in renderer._env.extensions
-    # noinspection PyUnresolvedReferences
-    assert renderer._env.loader.searchpath == [str(mock_paths.tmpl)]  # type: ignore
+    assert isinstance(renderer._env.loader, FileSystemLoader)
+    assert renderer._env.loader.searchpath == [str(mock_paths.tmpl)]
     assert renderer._locale == mock_paths.locale
 
 
@@ -71,12 +105,10 @@ async def test_get_locales(mock_paths: Paths, tmpl: TmplRender) -> None:
     :param tmpl: Fixture providing a TmplRender instance.
     :return: None
     """
-    Path(mock_paths.locale, "en").mkdir()
-    Path(mock_paths.locale, "ru").mkdir()
+    make_locales(mock_paths, "en", "ru")
     locales: list[str] = await tmpl.get_locales()
     assert sorted(locales) == ["en", "ru"]
-    for folder in mock_paths.locale.iterdir():
-        folder.rmdir()
+    remove_locales(paths=mock_paths)
     locales_empty: list[str] = await tmpl.get_locales()
     assert locales_empty == []
 
@@ -93,8 +125,7 @@ async def test_render_no_data(mock_trans_load: MagicMock, tmpl: TmplRender, mock
     :param mock_paths: Fixture providing a Paths object with mock directories.
     :return: None
     """
-    Path(mock_paths.tmpl, "test.txt").write_text(data="Hello, World!", encoding="utf-8")
-    Path(mock_paths.locale, "en").mkdir(exist_ok=True)
+    write_template(paths=mock_paths, text="Hello, World!")
     mock_translations: MagicMock = MagicMock()
     mock_trans_load.return_value = mock_translations
     result: str = await tmpl.render(tmpl="test.txt", locale="en")
@@ -113,8 +144,7 @@ async def test_render_with_data(mock_trans_load: MagicMock, tmpl: TmplRender, mo
     :param mock_paths: Fixture providing a Paths object with mock directories.
     :return: None
     """
-    Path(mock_paths.tmpl, "test.txt").write_text(data="Hello, {{ name }}!", encoding="utf-8")
-    Path(mock_paths.locale, "en").mkdir(exist_ok=True)
+    write_template(paths=mock_paths, text="Hello, {{ name }}!")
     mock_translations: MagicMock = MagicMock()
     mock_trans_load.return_value = mock_translations
     data: dict = {"name": "Test"}
@@ -135,8 +165,7 @@ async def test_render_with_truncation(mock_trans_load: MagicMock, tmpl: TmplRend
     :return: None
     """
     long_text: str = "<p>" + "A" * 10 + "</p>"
-    Path(mock_paths.tmpl, "test.txt").write_text(data=long_text, encoding="utf-8")
-    Path(mock_paths.locale, "en").mkdir(exist_ok=True)
+    write_template(paths=mock_paths, text=long_text)
     mock_translations: MagicMock = MagicMock()
     mock_trans_load.return_value = mock_translations
     result: str = await tmpl.render(tmpl="test.txt", locale="en", max_len=10)
@@ -179,7 +208,7 @@ async def test_render_error(mock_translations_load: MagicMock, tmpl: TmplRender)
     :return: None
     """
     mock_translations_load.return_value = MagicMock()
-    with pytest.raises(expected_exception=Exception):
+    with pytest.raises(expected_exception=TemplateNotFound):
         await tmpl.render(tmpl="non_existent.txt", locale="en")
     mock_translations_load.side_effect = FileNotFoundError
     with pytest.raises(expected_exception=FileNotFoundError):

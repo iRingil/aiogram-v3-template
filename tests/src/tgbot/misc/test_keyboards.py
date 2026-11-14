@@ -1,7 +1,6 @@
-"""Unit tests for src/tgbot/misc/keyboards.py"""
+"""Unit tests for src/tgbot/misc/keyboards.py."""
 
-# pylint: disable=redefined-outer-name
-# pylint: disable=protected-access
+# ruff: noqa: S101, SLF001
 
 from unittest.mock import MagicMock
 

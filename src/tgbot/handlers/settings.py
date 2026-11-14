@@ -1,4 +1,4 @@
-"""This module contains handlers for settings-related functionality."""
+"""Handlers for settings-related functionality."""
 
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message

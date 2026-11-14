@@ -1,13 +1,13 @@
-"""Unit tests for src/tgbot/handlers/errors.py"""
+"""Unit tests for src/tgbot/handlers/errors.py."""
 
-# pylint: disable=redefined-outer-name
+# ruff: noqa: S101
 
 from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
-from aiogram.handlers import ErrorHandler
-from aiogram.types import Update, Message, CallbackQuery, ErrorEvent
+from aiogram.handlers import BaseHandler
+from aiogram.types import CallbackQuery, ErrorEvent, Message, Update
 
 from tgbot.handlers.errors import ErrHandler
 
@@ -90,7 +90,7 @@ def test_error_handler_init(error_handler: ErrHandler) -> None:
     :param error_handler: The error handler instance to test.
     :return: None
     """
-    assert isinstance(error_handler, ErrorHandler)
+    assert isinstance(error_handler, BaseHandler)
     assert hasattr(error_handler, "event")
     assert hasattr(error_handler, "handle")
 

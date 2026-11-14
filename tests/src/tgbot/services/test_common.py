@@ -1,17 +1,17 @@
-# type: ignore
-"""Unit tests for src/tgbot/services/common.py"""
+"""Unit tests for src/tgbot/services/common.py."""
 
-# pylint: disable=redefined-outer-name
-# pylint: disable=protected-access
+# ruff: noqa: S101, SLF001
 
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, NonCallableMock
 
 import pytest
+from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import EditMessageText
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, User
+from aiogram.types import CallbackQuery, InaccessibleMessage, InlineKeyboardMarkup, Message, User
 from pytest_mock import MockerFixture
 
+from tests.helpers import mocked
 from tgbot.config import Config
 from tgbot.misc.keyboards import KeyboardManager
 from tgbot.misc.tmpl_render import TmplRender
@@ -132,7 +132,8 @@ async def test_edit_or_send_callback_success(base_service: BaseService, callback
     :param callback_query: Mocked CallbackQuery object.
     """
     # Arrange
-    callback_query.message.edit_text = AsyncMock(return_value=Mock(spec=Message))
+    origin: NonCallableMock = mocked(callback_query.message)
+    origin.edit_text = AsyncMock(return_value=Mock(spec=Message))
     callback_query.answer = AsyncMock()
     reply_markup: InlineKeyboardMarkup = InlineKeyboardMarkup(inline_keyboard=[])
     text: str = "Edited text"
@@ -141,9 +142,9 @@ async def test_edit_or_send_callback_success(base_service: BaseService, callback
         call=callback_query, text=text, reply_markup=reply_markup
     )
     # Assert
-    callback_query.message.edit_text.assert_called_once_with(text=text, reply_markup=reply_markup)
+    origin.edit_text.assert_called_once_with(text=text, reply_markup=reply_markup)
     callback_query.answer.assert_called_once_with()
-    assert result == callback_query.message.edit_text.return_value
+    assert result == origin.edit_text.return_value
 
 
 @pytest.mark.asyncio
@@ -158,10 +159,9 @@ async def test_edit_or_send_callback_failure(
     :param callback_query: Mocked CallbackQuery object.
     """
     # Arrange
-    callback_query.message.edit_text = AsyncMock(
-        side_effect=TelegramBadRequest(method=EditMessageText(text="Test"), message="Too old")
-    )
-    callback_query.message.answer = AsyncMock(return_value=Mock(spec=Message))
+    origin: NonCallableMock = mocked(callback_query.message)
+    origin.edit_text = AsyncMock(side_effect=TelegramBadRequest(method=EditMessageText(text="Test"), message="Too old"))
+    origin.answer = AsyncMock(return_value=Mock(spec=Message))
     callback_query.answer = AsyncMock()
     mock_tmpl.render = AsyncMock(return_value="Expired action text")
     reply_markup: InlineKeyboardMarkup = InlineKeyboardMarkup(inline_keyboard=[])
@@ -171,11 +171,11 @@ async def test_edit_or_send_callback_failure(
         call=callback_query, text=text, reply_markup=reply_markup
     )
     # Assert
-    callback_query.message.edit_text.assert_called_once_with(text=text, reply_markup=reply_markup)
+    origin.edit_text.assert_called_once_with(text=text, reply_markup=reply_markup)
     mock_tmpl.render.assert_called_once_with(tmpl=base_service._msg_expired_action, locale="en")
     callback_query.answer.assert_called_once_with(text="Expired action text", show_alert=True)
-    callback_query.message.answer.assert_called_once_with(text=text, reply_markup=reply_markup)
-    assert result == callback_query.message.answer.return_value
+    origin.answer.assert_called_once_with(text=text, reply_markup=reply_markup)
+    assert result == origin.answer.return_value
 
 
 # noinspection PyUnresolvedReferences
@@ -191,11 +191,11 @@ async def test_edit_or_send_callback_same_content(
     :param mocker: Pytest mocker fixture.
     """
     # Arrange
-    # noinspection PyTypeChecker
+    origin: NonCallableMock = mocked(callback_query.message)
     mocker.patch.object(
-        target=callback_query.message,
+        target=origin,
         attribute="edit_text",
-        side_effect=TelegramBadRequest(method="editMessageText", message="the same as a current content"),
+        side_effect=TelegramBadRequest(method=EditMessageText(text="Test"), message="the same as a current content"),
     )
     callback_query.answer = AsyncMock()
     reply_markup: InlineKeyboardMarkup = InlineKeyboardMarkup(inline_keyboard=[])
@@ -205,10 +205,10 @@ async def test_edit_or_send_callback_same_content(
         call=callback_query, text=text, reply_markup=reply_markup
     )
     # Assert
-    callback_query.message.edit_text.assert_called_once_with(text=text, reply_markup=reply_markup)
+    origin.edit_text.assert_called_once_with(text=text, reply_markup=reply_markup)
     callback_query.answer.assert_called_once_with()
-    callback_query.message.answer.assert_not_called()
-    assert result == callback_query.message
+    origin.answer.assert_not_called()
+    assert result == origin
 
 
 @pytest.mark.asyncio
@@ -220,24 +220,22 @@ async def test_edit_or_send_msg_success(base_service: BaseService, message: Mess
     :param message: Mocked Message object.
     """
     # Arrange
-    # noinspection PyPropertyAccess
-    message.bot = AsyncMock()
-    message.bot.edit_message_text = AsyncMock(return_value=Mock(spec=Message))
+    bot: AsyncMock = AsyncMock()
+    bot.edit_message_text = AsyncMock(return_value=Mock(spec=Message))
     message.chat = Mock(id=12345)
     message.message_id = 67890
     reply_markup: InlineKeyboardMarkup = InlineKeyboardMarkup(inline_keyboard=[])
     text: str = "Edited text"
     # Act
     result: Message = await base_service._edit_or_send_msg(
-        bot=message.bot, chat_id=message.chat.id, msg_id=message.message_id, text=text, reply_markup=reply_markup
+        bot=bot, chat_id=message.chat.id, msg_id=message.message_id, text=text, reply_markup=reply_markup
     )
     # Assert
-    message.bot.edit_message_text.assert_called_once_with(
+    bot.edit_message_text.assert_called_once_with(
         chat_id=message.chat.id, message_id=message.message_id, text=text, reply_markup=reply_markup
     )
-    # noinspection PyUnresolvedReferences
-    message.bot.send_message.assert_not_called()
-    assert result == message.bot.edit_message_text.return_value
+    bot.send_message.assert_not_called()
+    assert result == bot.edit_message_text.return_value
 
 
 @pytest.mark.asyncio
@@ -249,23 +247,123 @@ async def test_edit_or_send_msg_failure(base_service: BaseService, message: Mess
     :param message: Mocked Message object.
     """
     # Arrange
-    # noinspection PyPropertyAccess
-    message.bot = AsyncMock()
-    message.bot.edit_message_text = AsyncMock(
+    bot: AsyncMock = AsyncMock()
+    bot.edit_message_text = AsyncMock(
         side_effect=TelegramBadRequest(method=EditMessageText(text="Test"), message="Too old")
     )
-    message.bot.send_message = AsyncMock(return_value=Mock(spec=Message))
+    bot.send_message = AsyncMock(return_value=Mock(spec=Message))
     message.chat = Mock(id=12345)
     message.message_id = 67890
     reply_markup: InlineKeyboardMarkup = InlineKeyboardMarkup(inline_keyboard=[])
     text: str = "New text"
     # Act
     result: Message = await base_service._edit_or_send_msg(
-        bot=message.bot, chat_id=message.chat.id, msg_id=message.message_id, text=text, reply_markup=reply_markup
+        bot=bot, chat_id=message.chat.id, msg_id=message.message_id, text=text, reply_markup=reply_markup
     )
     # Assert
-    message.bot.edit_message_text.assert_called_once_with(
+    bot.edit_message_text.assert_called_once_with(
         chat_id=message.chat.id, message_id=message.message_id, text=text, reply_markup=reply_markup
     )
-    message.bot.send_message.assert_called_once_with(chat_id=message.chat.id, text=text, reply_markup=reply_markup)
-    assert result == message.bot.send_message.return_value
+    bot.send_message.assert_called_once_with(chat_id=message.chat.id, text=text, reply_markup=reply_markup)
+    assert result == bot.send_message.return_value
+
+
+@pytest.mark.asyncio
+async def test_edit_or_send_msg_no_message(base_service: BaseService) -> None:
+    """
+    Test the _edit_or_send_msg method when Telegram answers an edit with True instead of the message.
+
+    :param base_service: Instance of BaseService.
+    """
+    bot: AsyncMock = AsyncMock()
+    bot.edit_message_text = AsyncMock(return_value=True)
+    with pytest.raises(expected_exception=TypeError, match="returned no message"):
+        await base_service._edit_or_send_msg(bot=bot, chat_id=12345, msg_id=67890, text="Text")
+    bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_edit_or_send_callback_not_a_message(base_service: BaseService, callback_query: CallbackQuery) -> None:
+    """
+    Test the _edit_or_send_callback method when Telegram answers an edit with True: the origin is returned.
+
+    :param base_service: Instance of BaseService.
+    :param callback_query: Mocked CallbackQuery object.
+    """
+    origin: NonCallableMock = mocked(callback_query.message)
+    origin.edit_text = AsyncMock(return_value=True)
+    callback_query.answer = AsyncMock()
+    result: Message = await base_service._edit_or_send_callback(call=callback_query, text="Text")
+    callback_query.answer.assert_called_once_with()
+    assert result == origin
+
+
+@pytest.mark.asyncio
+async def test_edit_or_send_callback_inaccessible(
+    base_service: BaseService, mock_tmpl: TmplRender, callback_query: CallbackQuery
+) -> None:
+    """
+    Test the _edit_or_send_callback method when the origin message is no longer accessible.
+
+    :param base_service: Instance of BaseService.
+    :param mock_tmpl: Mocked TmplRender object.
+    :param callback_query: Mocked CallbackQuery object.
+    """
+    origin: Mock = Mock(spec=InaccessibleMessage)
+    origin.answer = AsyncMock(return_value=Mock(spec=Message))
+    mocked(callback_query).message = origin
+    callback_query.answer = AsyncMock()
+    mock_tmpl.render = AsyncMock(return_value="Expired action text")
+    result: Message = await base_service._edit_or_send_callback(call=callback_query, text="Text")
+    callback_query.answer.assert_called_once_with(text="Expired action text", show_alert=True)
+    origin.answer.assert_called_once_with(text="Text", reply_markup=None)
+    assert result == origin.answer.return_value
+
+
+@pytest.mark.asyncio
+async def test_edit_or_send_callback_without_message(
+    base_service: BaseService, mock_tmpl: TmplRender, callback_query: CallbackQuery
+) -> None:
+    """
+    Test the _edit_or_send_callback method when the callback has no message: the bot sends a new one.
+
+    :param base_service: Instance of BaseService.
+    :param mock_tmpl: Mocked TmplRender object.
+    :param callback_query: Mocked CallbackQuery object.
+    """
+    bot: Mock = Mock(spec=Bot)
+    bot.send_message = AsyncMock(return_value=Mock(spec=Message))
+    call: NonCallableMock = mocked(callback_query)
+    call.message = None
+    call.bot = bot
+    call.from_user.id = 12345
+    call.answer = AsyncMock()
+    mock_tmpl.render = AsyncMock(return_value="Expired action text")
+    result: Message = await base_service._edit_or_send_callback(call=callback_query, text="Text")
+    bot.send_message.assert_called_once_with(chat_id=12345, text="Text", reply_markup=None)
+    assert result == bot.send_message.return_value
+
+
+def test_bot_of_unbound_event(base_service: BaseService, message: Message) -> None:
+    """
+    Test the _bot_of method with an event that is not bound to a bot.
+
+    :param base_service: Instance of BaseService.
+    :param message: Mocked Message object.
+    """
+    mocked(message).bot = None
+    with pytest.raises(expected_exception=RuntimeError, match="not bound to a bot"):
+        base_service._bot_of(event=message)
+
+
+@pytest.mark.parametrize(("language_code", "expected"), [("ru", "ru"), (None, "en"), ("", "en")])
+def test_locale(base_service: BaseService, language_code: str | None, expected: str) -> None:
+    """
+    Test the _locale method: the language reported by Telegram, or the default locale.
+
+    :param base_service: Instance of BaseService.
+    :param language_code: Language code reported by Telegram.
+    :param expected: Expected locale.
+    """
+    assert base_service._locale(user=Mock(spec=User, language_code=language_code)) == expected
+    assert base_service._locale(user=None) == "en"
