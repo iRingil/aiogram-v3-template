@@ -177,7 +177,7 @@ def test_run_polling(tg_bot: TgBot) -> None:
         patch(target="bot.run") as mock_run,
     ):
         mocked(tg_bot._config).webhook = None
-        with patch.object(target=tg_bot._dp, attribute="start_polling", return_value=MagicMock()):
+        with patch.object(target=tg_bot._dp, attribute="start_polling", new=MagicMock()):
             tg_bot.run()
         assert mock_run.call_count == 1
         assert "main" in mock_run.call_args.kwargs
