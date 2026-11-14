@@ -39,9 +39,7 @@ class ProfileService(BaseService):
         :param message: The incoming message from the user.
         :return: None
         """
-        user: User | None = message.from_user
-        data: dict[str, str] = {"username": user.first_name if user is not None else ""}
-        text: str = await self._tmpl.render(tmpl=self._cmd_start, locale=self._locale(user=user), data=data)
+        text: str = await self._render_for_user(tmpl=self._cmd_start, message=message)
         await message.answer(text=text)
 
     async def help(self, message: Message) -> None:
@@ -51,7 +49,17 @@ class ProfileService(BaseService):
         :param message: The incoming message from the user.
         :return: None
         """
+        caption: str = await self._render_for_user(tmpl=self._cmd_help, message=message)
+        await message.answer_photo(photo=self._bot_logo, caption=caption)
+
+    async def _render_for_user(self, *, tmpl: str, message: Message) -> str:
+        """
+        Renders a template addressed to the sender of the message, in the language of the sender.
+
+        :param tmpl: Path to the template.
+        :param message: The incoming message from the user.
+        :return: The rendered text.
+        """
         user: User | None = message.from_user
         data: dict[str, str] = {"username": user.first_name if user is not None else ""}
-        caption: str = await self._tmpl.render(tmpl=self._cmd_help, locale=self._locale(user=user), data=data)
-        await message.answer_photo(photo=self._bot_logo, caption=caption)
+        return await self._tmpl.render(tmpl=tmpl, locale=self._locale(user=user), data=data)

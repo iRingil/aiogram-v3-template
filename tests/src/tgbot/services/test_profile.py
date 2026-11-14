@@ -2,6 +2,7 @@
 
 # ruff: noqa: SLF001
 
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -14,7 +15,7 @@ from tgbot.misc.keyboards import KeyboardManager
 from tgbot.misc.tmpl_render import TmplRender
 from tgbot.services.profile import ProfileService
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 @pytest.fixture
@@ -26,7 +27,7 @@ def config(mocker: MockerFixture) -> Config:
     :return: Mocked Config instance.
     """
     cfg: Config = mocker.Mock(spec=Config)
-    cfg.paths.bot_logo = "path/to/logo.jpg"
+    cfg.paths.bot_logo = Path("path/to/logo.jpg")
     return cfg
 
 
@@ -52,8 +53,6 @@ def kb(mocker: MockerFixture) -> KeyboardManager:
     :return: Mocked KeyboardManager instance.
     """
     kb: KeyboardManager = mocker.Mock(spec=KeyboardManager)
-    kb.main = AsyncMock(return_value="reply_kb")
-    kb.delete_profile = AsyncMock(return_value="inline_kb")
     return kb
 
 

@@ -21,9 +21,11 @@ from tgbot.misc import log_setup
 from tgbot.misc.log_setup import InterceptHandler, LoggingManager
 
 if TYPE_CHECKING:
-    from logging import _SysExcInfoType
+    from types import TracebackType
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
+
+type ExcInfo = tuple[type[BaseException], BaseException, TracebackType | None] | tuple[None, None, None]
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +55,7 @@ def records_fixture() -> Iterator[list]:
     logger.remove(sink_id)
 
 
-def _record(level: int, exc_info: "_SysExcInfoType | None" = None) -> logging.LogRecord:
+def _record(level: int, exc_info: ExcInfo | None = None) -> logging.LogRecord:
     """
     Builds a stdlib log record.
 

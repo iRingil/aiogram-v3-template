@@ -11,7 +11,7 @@ from aiogram.types import CallbackQuery, ErrorEvent, Message, Update
 
 from tgbot.handlers.errors import ErrHandler
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 @pytest.fixture

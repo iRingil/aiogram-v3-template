@@ -4,8 +4,8 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
-from unittest.mock import MagicMock, _Call
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from aiogram import Dispatcher, F, Router
@@ -17,14 +17,12 @@ from tgbot.handlers.errors import ErrHandler
 from tgbot.handlers.main import MainHandler
 from tgbot.misc.filters import IsAdmin
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 type FilterType = type[Command | MagicFilter] | MagicMock
 type FilterConfig = tuple[FilterType, dict[str, Any]]
 type HandlerSetup = tuple[Callable[..., Any], list[FilterConfig]]
-
-MODULE_PATH_PREFIX = "tgbot.handlers.main"
 
 
 @dataclass
@@ -97,25 +95,25 @@ def mocks(mocker: MockerFixture) -> Mocks:
         mock_dp=MagicMock(spec=Dispatcher),
         mock_tmpl=MagicMock(),
         mock_kb=MagicMock(),
-        mock_is_admin=mocker.patch(f"{MODULE_PATH_PREFIX}.IsAdmin"),
+        mock_is_admin=mocker.patch("tgbot.handlers.main.IsAdmin"),
         mock_is_admin_instance=MagicMock(spec=IsAdmin),
-        mock_admin_service=mocker.patch(f"{MODULE_PATH_PREFIX}.AdminService"),
+        mock_admin_service=mocker.patch("tgbot.handlers.main.AdminService"),
         mock_admin_svc_instance=MagicMock(),
-        mock_base_service=mocker.patch(f"{MODULE_PATH_PREFIX}.BaseService"),
+        mock_base_service=mocker.patch("tgbot.handlers.main.BaseService"),
         mock_base_svc_instance=MagicMock(),
-        mock_profile_service=mocker.patch(f"{MODULE_PATH_PREFIX}.ProfileService"),
+        mock_profile_service=mocker.patch("tgbot.handlers.main.ProfileService"),
         mock_profile_svc_instance=MagicMock(),
-        mock_settings_service=mocker.patch(f"{MODULE_PATH_PREFIX}.SettingsService"),
+        mock_settings_service=mocker.patch("tgbot.handlers.main.SettingsService"),
         mock_settings_svc_instance=MagicMock(),
-        mock_admin_handler=mocker.patch(f"{MODULE_PATH_PREFIX}.AdminHandler"),
+        mock_admin_handler=mocker.patch("tgbot.handlers.main.AdminHandler"),
         mock_admin_hdlr_instance=MagicMock(),
-        mock_common_handler=mocker.patch(f"{MODULE_PATH_PREFIX}.CommonHandler"),
+        mock_common_handler=mocker.patch("tgbot.handlers.main.CommonHandler"),
         mock_common_hdlr_instance=MagicMock(),
-        mock_profile_handler=mocker.patch(f"{MODULE_PATH_PREFIX}.ProfileHandler"),
+        mock_profile_handler=mocker.patch("tgbot.handlers.main.ProfileHandler"),
         mock_profile_hdlr_instance=MagicMock(),
-        mock_settings_handler=mocker.patch(f"{MODULE_PATH_PREFIX}.SettingsHandler"),
+        mock_settings_handler=mocker.patch("tgbot.handlers.main.SettingsHandler"),
         mock_settings_hdlr_instance=MagicMock(),
-        mock_router=mocker.patch(f"{MODULE_PATH_PREFIX}.Router"),
+        mock_router=mocker.patch("tgbot.handlers.main.Router"),
         mock_private_router=MagicMock(spec=Router),
     )
     result.mock_is_admin.return_value = result.mock_is_admin_instance
@@ -165,7 +163,6 @@ class TestMainHandler:
         mocks.mock_profile_handler.assert_called_once_with(service=mocks.mock_profile_svc_instance)
         mocks.mock_settings_handler.assert_called_once_with(service=mocks.mock_settings_svc_instance)
 
-    # noinspection PyUnresolvedReferences
     def test_register_handlers_argument_check(self, mocks: Mocks) -> None:
         """
         Test that _register_handlers registers handlers with correct arguments and order.
@@ -176,18 +173,15 @@ class TestMainHandler:
         MainHandler(config=mocks.mock_config, dp=mocks.mock_dp, tmpl=mocks.mock_tmpl, kb=mocks.mock_kb)
         mocks.mock_router.assert_called_once_with(name="Private chat")
         # Checking the router filter
-        router_filter_call: _Call | None = mocks.mock_private_router.message.filter.call_args
+        router_filter_call = mocks.mock_private_router.message.filter.call_args
         assert router_filter_call is not None, "Router.message.filter was not called"
-        actual_router_filter_arg: MagicFilter = cast("MagicFilter", router_filter_call.args[0])
+        actual_router_filter_arg: MagicFilter = router_filter_call.args[0]
         expected_router_magic_filter: MagicFilter = F.chat.type == "private"
         assert isinstance(actual_router_filter_arg, MagicFilter)
         # Compare magic_data, as this captures the essence of the filter
-        assert actual_router_filter_arg.magic_data == expected_router_magic_filter.magic_data, (
-            f"Router filter mismatch. "
-            f"Expected data {expected_router_magic_filter.magic_data}, got {actual_router_filter_arg.magic_data}"
-        )
+        assert actual_router_filter_arg.magic_data == expected_router_magic_filter.magic_data, "Router filter mismatch"
         mocks.mock_dp.include_router.assert_called_once_with(router=mocks.mock_private_router)
-        registrations: list[_Call] = mocks.mock_private_router.message.register.call_args_list
+        registrations = mocks.mock_private_router.message.register.call_args_list
         expected_handler_setups: list[HandlerSetup] = [
             (  # command /start
                 mocks.mock_profile_hdlr_instance.cmd_start,
@@ -203,7 +197,7 @@ class TestMainHandler:
             ),
             (  # command /admin
                 mocks.mock_admin_hdlr_instance.cmd_admin,
-                [(Command, {"commands": ("admin",)}), (mocks.mock_is_admin_instance, {})],  # Здесь MagicMock
+                [(Command, {"commands": ("admin",)}), (mocks.mock_is_admin_instance, {})],  # IsAdmin is a mock
             ),
             (  # delete unhandled messages
                 mocks.mock_common_hdlr_instance.any_delete,
@@ -215,8 +209,7 @@ class TestMainHandler:
             f"got {len(registrations)}. Actual calls: {registrations}"
         )
         for i, (expected_handler, expected_filters_config) in enumerate(expected_handler_setups):
-            actual_call: _Call = registrations[i]
-            actual_call_args: tuple[Any, ...] = actual_call.args  # Get the tuple of call arguments
+            actual_call_args: tuple[Any, ...] = registrations[i].args
             # 1. Check the handler itself (first argument)
             actual_handler_arg: Callable[..., Any] = actual_call_args[0]
             assert actual_handler_arg == expected_handler, (
@@ -233,25 +226,23 @@ class TestMainHandler:
             for j, (expected_filter_type_or_instance, expected_attrs) in enumerate(expected_filters_config):
                 actual_filter_obj: Command | MagicFilter | MagicMock = actual_filter_args[j]
                 if isinstance(expected_filter_type_or_instance, MagicMock):
-                    # If a specific mock instance (like mocks.mock_is_admin_instance) is expected.
+                    # A specific mock instance (like mocks.mock_is_admin_instance) is expected
                     assert actual_filter_obj == expected_filter_type_or_instance, (
-                        f"Registration {i}, Filter {j}: Mock instance mismatch. "
-                        f"Expected {expected_filter_type_or_instance}, got {actual_filter_obj}"
+                        f"Registration {i}, Filter {j}: Mock instance mismatch"
                     )
-                else:
-                    # expected_filter_type_or_instance здесь будет Type[Command] или Type[MagicFilter]
-                    # If a filter type is expected (Command, MagicFilter)
-                    expected_type_to_check: type[Command | MagicFilter] = expected_filter_type_or_instance
-                    assert isinstance(actual_filter_obj, expected_type_to_check), (
-                        f"Registration {i}, Filter {j}: Type mismatch. "
-                        f"Expected instance of {expected_type_to_check}, got {type(actual_filter_obj)}"
+                    continue
+                # A filter type is expected (Command, MagicFilter)
+                assert isinstance(actual_filter_obj, expected_filter_type_or_instance), (
+                    f"Registration {i}, Filter {j}: Type mismatch. "
+                    f"Expected an instance of {expected_filter_type_or_instance.__name__}, "
+                    f"got {type(actual_filter_obj).__name__}"
+                )
+                for attr_name, expected_value in expected_attrs.items():
+                    actual_value: Any = getattr(actual_filter_obj, attr_name)
+                    assert actual_value == expected_value, (
+                        f"Registration {i}, Filter {j} ({expected_filter_type_or_instance.__name__}): "
+                        f"Attribute '{attr_name}' mismatch. "
+                        f"Expected {expected_value!r}, got {actual_value!r}"
                     )
-                    for attr_name, expected_value in expected_attrs.items():
-                        actual_value: Any = getattr(actual_filter_obj, attr_name)
-                        assert actual_value == expected_value, (
-                            f"Registration {i}, Filter {j} ({expected_type_to_check.__name__}): "
-                            f"Attribute '{attr_name}' mismatch. "
-                            f"Expected {expected_value!r}, got {actual_value!r}"
-                        )
         # Checking error handler registration
         mocks.mock_private_router.errors.register.assert_called_once_with(ErrHandler)

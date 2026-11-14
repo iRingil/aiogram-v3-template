@@ -9,7 +9,7 @@ from pytest_mock import MockerFixture
 from tgbot.handlers.common import CommonHandler
 from tgbot.services.common import BaseService
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 @pytest.fixture

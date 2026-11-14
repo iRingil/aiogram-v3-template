@@ -17,7 +17,7 @@ from tgbot.misc.keyboards import KeyboardManager
 from tgbot.misc.tmpl_render import TmplRender
 from tgbot.services.common import BaseService
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 @pytest.fixture

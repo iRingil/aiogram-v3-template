@@ -13,7 +13,7 @@ from tests.helpers import mocked
 from tgbot.handlers.admin import AdminHandler
 from tgbot.services.admin import AdminService
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 @pytest.fixture

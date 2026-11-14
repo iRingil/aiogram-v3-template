@@ -10,12 +10,12 @@ from typing import Any
 
 import pytest
 from environs import EnvError
-from redis.asyncio import Redis
+from redis.asyncio import ConnectionPool, Redis
 
 from tgbot.config import Config
 from tgbot.misc.dataclasses import Paths, WebhookCredentials
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 ENV_FILE_CONTENT: str = """
     BOT_TOKEN=testtoken
@@ -26,10 +26,10 @@ ENV_FILE_CONTENT: str = """
     REDIS_DB_PASS=testpass
     REDIS_DB_USER=testuser_redis
     REDIS_SOCKET_PATH=/var/run/redis/redis-server.sock
-    WEBHOOK_HOST=webhookhost
-    WEBHOOK_PATH=webhookpath
-    WEBHOOK_TOKEN=webhooktoken
-    WEBAPP_HOST=apphost
+    WEBHOOK_HOST=webhook-host
+    WEBHOOK_PATH=webhook-path
+    WEBHOOK_TOKEN=webhook-token
+    WEBAPP_HOST=app-host
     WEBAPP_PORT=8080
 """
 
@@ -177,18 +177,21 @@ def test_config_paths(config_instance: Config, tmp_path: Path) -> None:
 @pytest.mark.usefixtures("env_file_path")
 def test_config_redis(*, use_redis: bool, use_redis_socket: bool, expect_redis: bool, tmp_path: Path) -> None:
     """
-    Test that Config initializes redis correctly based on constructor flags.
+    Test that Config initializes Redis correctly based on constructor flags.
 
-    :param use_redis: Flag to enable/disable redis usage.
-    :param use_redis_socket: Flag to enable/disable redis socket.
-    :param expect_redis: Whether redis should be initialized (True) or not (False).
+    :param use_redis: Flag to enable/disable Redis usage.
+    :param use_redis_socket: Flag to enable/disable the Redis socket.
+    :param expect_redis: Whether Redis should be initialized (True) or not (False).
     :param tmp_path: Temporary directory provided by pytest.
     :return: None
     """
     config: Config = Config(base_dir=tmp_path, use_redis=use_redis, use_redis_socket=use_redis_socket)
     if expect_redis:
-        assert isinstance(config.redis, Redis)
-        conn_kwargs: dict[str, Any] = config.redis.connection_pool.connection_kwargs
+        redis = config.redis
+        assert isinstance(redis, Redis)
+        pool = redis.connection_pool
+        assert isinstance(pool, ConnectionPool)
+        conn_kwargs: dict[str, Any] = pool.connection_kwargs
         if use_redis_socket:
             assert conn_kwargs.get("path") == "/var/run/redis/redis-server.sock"
             assert conn_kwargs.get("host") is None
@@ -217,12 +220,13 @@ def test_config_webhook(*, use_webhook: bool, expect_webhook: bool, tmp_path: Pa
     """
     config: Config = Config(base_dir=tmp_path, use_webhook=use_webhook)
     if expect_webhook:
-        assert isinstance(config.webhook, WebhookCredentials)
-        assert config.webhook.wh_host == "webhookhost"
-        assert config.webhook.wh_path == "webhookpath"
-        assert config.webhook.wh_token == "webhooktoken"
-        assert config.webhook.app_host == "apphost"
-        assert config.webhook.app_port == 8080
+        webhook = config.webhook
+        assert isinstance(webhook, WebhookCredentials)
+        assert webhook.wh_host == "webhook-host"
+        assert webhook.wh_path == "webhook-path"
+        assert webhook.wh_token == "webhook-token"
+        assert webhook.app_host == "app-host"
+        assert webhook.app_port == 8080
     else:
         assert config.webhook is None
 

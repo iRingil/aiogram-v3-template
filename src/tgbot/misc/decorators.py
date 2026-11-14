@@ -62,7 +62,7 @@ def handle_exc[**P, R](func: Callable[P, Awaitable[R]]) -> Callable[P, Coroutine
 
         :param args: Positional arguments passed to the wrapped function.
         :param kwargs: Keyword arguments passed to the wrapped function.
-        :return: The result of the wrapped async function, or None if it raised or was cancelled.
+        :return: The result of the wrapped async function, or None if it raised or was canceled.
         """
         try:
             return await func(*args, **kwargs)

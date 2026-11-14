@@ -17,5 +17,5 @@ def mocked(obj: object) -> NonCallableMock:
     :raises TypeError: if the object is not a mock.
     """
     if not isinstance(obj, NonCallableMock):
-        raise TypeError(f"{obj!r} is not a mock")
+        raise TypeError(f"{type(obj).__name__} is not a mock")
     return obj

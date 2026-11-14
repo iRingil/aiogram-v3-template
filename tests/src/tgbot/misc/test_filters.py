@@ -12,7 +12,7 @@ from tests.helpers import mocked
 from tgbot.config import Config
 from tgbot.misc.filters import IsAdmin
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 @pytest.fixture

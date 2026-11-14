@@ -11,7 +11,7 @@ from tests.helpers import mocked
 from tgbot.handlers.profile import ProfileHandler
 from tgbot.services.profile import ProfileService
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 @pytest.fixture
@@ -24,8 +24,6 @@ def profile_svc(mocker: MockerFixture) -> ProfileService:
     """
     svc: ProfileService = mocker.Mock(spec=ProfileService)
     svc.start = AsyncMock()
-    svc.profile = AsyncMock()
-    svc.delete_user = AsyncMock()
     svc.help = AsyncMock()
     return svc
 

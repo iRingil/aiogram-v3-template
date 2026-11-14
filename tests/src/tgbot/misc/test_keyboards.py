@@ -9,7 +9,7 @@ import pytest
 from tgbot.misc.keyboards import KeyboardManager
 from tgbot.misc.tmpl_render import TmplRender
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 @pytest.fixture

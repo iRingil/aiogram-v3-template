@@ -34,9 +34,10 @@ class Broadcaster:
         :param bot: Bot object, consumed by the class constructor.
         :return: The single instance of the class.
         """
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+        instance = cls._instance
+        if instance is None:
+            instance = cls._instance = super().__new__(cls)
+        return instance
 
     def __init__(self, bot: Bot) -> None:
         """

@@ -23,7 +23,7 @@ from tgbot.misc.tmpl_render import TmplRender
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 @pytest.fixture(name="paths")
@@ -195,9 +195,7 @@ async def test_render_concurrent_locales(paths: Paths) -> None:
     _write_template(paths, "{% trans %}Hello{% endtrans %}")
     _compile_catalog(paths, "ru", {"Hello": "Privet"})
     tmpl: TmplRender = TmplRender(paths=paths)
-    results: list[str] = await gather(
-        *(tmpl.render(tmpl="test.jinja2", locale="ru" if i % 2 == 0 else "en") for i in range(20))
-    )
+    results = await gather(*(tmpl.render(tmpl="test.jinja2", locale="ru" if i % 2 == 0 else "en") for i in range(20)))
     assert set(results[0::2]) == {"Privet"}
     assert set(results[1::2]) == {"Hello"}
 

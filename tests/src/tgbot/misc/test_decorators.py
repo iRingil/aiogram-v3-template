@@ -10,7 +10,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramFor
 
 from tgbot.misc.decorators import handle_exc, handle_telegram_exc
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 @pytest.mark.asyncio

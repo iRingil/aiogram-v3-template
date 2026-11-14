@@ -21,7 +21,7 @@ from aiogram.types import BufferedInputFile, InlineKeyboardMarkup
 from tgbot.misc import broadcaster as broadcaster_module
 from tgbot.misc.broadcaster import Broadcaster
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 def _api_error() -> TelegramAPIError:
@@ -182,11 +182,11 @@ async def test_send_photo(broadcaster: Broadcaster, bot: MagicMock) -> None:
     """
     bot.send_photo.return_value = MagicMock(message_id=222)
     result: int | None = await broadcaster.send_content(
-        user_id=42, msg="a chart", content_type="photo", photo=b"PNGDATA"
+        user_id=42, msg="a chart", content_type="photo", photo=b"png-bytes"
     )
     assert result == 222
     sent_photo: BufferedInputFile = bot.send_photo.call_args.kwargs["photo"]
-    assert sent_photo.data == b"PNGDATA"
+    assert sent_photo.data == b"png-bytes"
     assert sent_photo.filename == "photo.png"
     assert bot.send_photo.call_args.kwargs["caption"] == "a chart"
     assert bot.send_photo.call_args.kwargs["chat_id"] == 42
@@ -254,7 +254,7 @@ async def test_broadcast_forwards_options(broadcaster: Broadcaster, bot: MagicMo
         notify=False,
         reply_markup=markup,
         reply_to_message_id=9,
-        photo=b"PNGDATA",
+        photo=b"png-bytes",
     )
     assert [call.kwargs["chat_id"] for call in bot.send_photo.await_args_list] == [1, 2]
     for call in bot.send_photo.await_args_list:
@@ -262,7 +262,7 @@ async def test_broadcast_forwards_options(broadcaster: Broadcaster, bot: MagicMo
         assert call.kwargs["disable_notification"] is True
         assert call.kwargs["reply_markup"] is markup
         assert call.kwargs["reply_to_message_id"] == 9
-        assert call.kwargs["photo"].data == b"PNGDATA"
+        assert call.kwargs["photo"].data == b"png-bytes"
 
 
 async def test_broadcast_telegram_error(broadcaster: Broadcaster, bot: MagicMock) -> None:

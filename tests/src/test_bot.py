@@ -20,7 +20,7 @@ from tgbot.misc.keyboards import KeyboardManager
 from tgbot.misc.scheduler import Scheduler
 from tgbot.misc.tmpl_render import TmplRender
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 # noinspection PyProtectedMember
@@ -172,8 +172,6 @@ def test_run_polling(tg_bot: TgBot) -> None:
     """
     with (
         patch(target="bot.MainHandler"),
-        patch.object(target=tg_bot._dp, attribute="startup"),
-        patch.object(target=tg_bot._dp, attribute="shutdown"),
         patch(target="bot.run") as mock_run,
     ):
         mocked(tg_bot._config).webhook = None
@@ -181,8 +179,8 @@ def test_run_polling(tg_bot: TgBot) -> None:
             tg_bot.run()
         assert mock_run.call_count == 1
         assert "main" in mock_run.call_args.kwargs
-        mocked(tg_bot._dp.startup.register).assert_called_once_with(callback=tg_bot._on_startup)
-        mocked(tg_bot._dp.shutdown.register).assert_called_once_with(callback=tg_bot._on_shutdown)
+        assert tg_bot._on_startup in [handler.callback for handler in tg_bot._dp.startup.handlers]
+        assert tg_bot._on_shutdown in [handler.callback for handler in tg_bot._dp.shutdown.handlers]
 
 
 # noinspection PyPropertyAccess
@@ -196,8 +194,6 @@ async def test_run_webhook(tg_bot: TgBot) -> None:
     """
     with (
         patch(target="bot.MainHandler"),
-        patch.object(target=tg_bot._dp, attribute="startup"),
-        patch.object(target=tg_bot._dp, attribute="shutdown"),
         patch(target="bot.run_app") as mock_run_app,
         patch(target="bot.Application") as mock_app,
         patch(target="bot.SimpleRequestHandler") as mock_handler,
@@ -206,15 +202,13 @@ async def test_run_webhook(tg_bot: TgBot) -> None:
         mocked(tg_bot._config).webhook = MagicMock(
             wh_path="webhook_path", wh_token="mock_token", app_host="localhost", app_port=8080
         )
-        tg_bot._on_startup = AsyncMock()
-        tg_bot._on_shutdown = AsyncMock()
         tg_bot.run()
         await sleep(delay=0.1)
         mock_handler.assert_called_once_with(dispatcher=tg_bot._dp, bot=tg_bot._bot, secret_token="mock_token")
         mock_setup.assert_called_once_with(mock_app.return_value, tg_bot._dp)
         mock_run_app.assert_called_once_with(app=mock_app.return_value, host="localhost", port=8080)
-        mocked(tg_bot._dp.startup.register).assert_called_once_with(callback=tg_bot._on_startup)
-        mocked(tg_bot._dp.shutdown.register).assert_called_once_with(callback=tg_bot._on_shutdown)
+        assert tg_bot._on_startup in [handler.callback for handler in tg_bot._dp.startup.handlers]
+        assert tg_bot._on_shutdown in [handler.callback for handler in tg_bot._dp.shutdown.handlers]
 
 
 @pytest.mark.asyncio

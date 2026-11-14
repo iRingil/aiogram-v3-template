@@ -13,7 +13,7 @@ from tgbot.misc.broadcaster import Broadcaster
 from tgbot.misc.scheduler import Scheduler
 from tgbot.misc.tmpl_render import TmplRender
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 @pytest.fixture
@@ -52,12 +52,7 @@ async def test_schedule(scheduler: Scheduler) -> None:
     :param scheduler: Instance of Scheduler to test.
     :return: None
     """
-    with (
-        patch.object(target=scheduler._scheduler, attribute="add_job") as mock_add_job,
-        patch.object(target=scheduler._scheduler, attribute="start") as mock_start,
-    ):
-        # Execute the method
+    with patch.object(target=scheduler._scheduler, attribute="start") as mock_start:
         await scheduler.schedule()
-        # Verify calls
-        assert mock_add_job.call_count == 0  # no tasks added
+        assert scheduler._scheduler.get_jobs() == []  # The template schedules no tasks
         mock_start.assert_called_once()

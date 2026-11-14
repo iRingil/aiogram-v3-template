@@ -46,7 +46,7 @@ class Config:
         :param debug: True, if debugging mode is enabled, otherwise False.
         :param use_redis: True, if Redis is used, otherwise False.
         :param use_webhook: True, if webhook is used, otherwise False.
-        :param use_redis_socket: True, if a redis socket is used, otherwise False.
+        :param use_redis_socket: True, if a Redis socket is used, otherwise False.
         :raises FileNotFoundError: if the .env file is not found.
         """
         if not debug:
@@ -114,7 +114,7 @@ class Config:
         Returns an instance of the Redis class to connect to the database.
 
         :param use_redis: True, if Redis is used, otherwise False.
-        :param use_socket: True, if a redis socket is used, otherwise False.
+        :param use_socket: True, if a Redis socket is used, otherwise False.
         :return: Redis instance or None.
         :raises EnvError: if the Redis credentials are not found in the .env file.
         """

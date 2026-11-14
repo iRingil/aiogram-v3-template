@@ -12,7 +12,7 @@ from tests.helpers import mocked
 from tgbot.misc.bot_commands import BotCommands
 from tgbot.misc.tmpl_render import TmplRender
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 @pytest.fixture

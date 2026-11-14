@@ -10,7 +10,7 @@ from pytest_mock import MockerFixture
 from tgbot.handlers.settings import SettingsHandler
 from tgbot.services.settings import SettingsService
 
-__all__: tuple = ()
+__all__: tuple[str, ...] = ()
 
 
 @pytest.fixture
