@@ -2,18 +2,18 @@
 
 cd ../..
 
-source venv/bin/activate
+source .venv/bin/activate
 
-ALL_LOCALES="en ru"
+all_locales="en ru"
 
-for LOCALE in $ALL_LOCALES; do
+for locale in $all_locales; do
     pybabel update \
     --input-file=./src/tgbot/locales/messages.pot \
     --output-dir=./src/tgbot/locales \
     --width=120 \
     --init-missing \
     --update-header-comment \
-    --locale="$LOCALE"
+    --locale="$locale"
 done
 
 deactivate
