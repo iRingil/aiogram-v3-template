@@ -15,7 +15,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from aiogram.types import TelegramObject, User
+from aiogram.types import Chat, TelegramObject, User
 from asyncpg import PostgresError
 
 from tgbot.misc import middlewares
@@ -376,17 +376,34 @@ def sync_fixture(today: _FakeToday) -> UserSyncMiddleware:
     return UserSyncMiddleware(client=MagicMock())
 
 
-def _tg_user(language_code: str | None = "en") -> dict[str, Any]:
+_PRIVATE_CHAT: Chat = Chat(id=7, type="private")
+
+
+def _tg_user(
+    language_code: str | None = "en",
+    first_name: str = "Ann",
+    last_name: str | None = "Lee",
+    username: str | None = "ann",
+) -> dict[str, Any]:
     """
-    Builds a data dict with a full Telegram user.
+    Builds a data dict with a full Telegram user writing in a private chat.
 
     :param language_code: The language code Telegram reports.
-    :return: A data dict with "event_from_user".
+    :param first_name: The first name Telegram reports.
+    :param last_name: The last name Telegram reports.
+    :param username: The username Telegram reports.
+    :return: A data dict with "event_from_user" and "event_chat".
     """
     return {
         "event_from_user": User(
-            id=7, is_bot=False, first_name="Ann", last_name="Lee", username="ann", language_code=language_code
-        )
+            id=7,
+            is_bot=False,
+            first_name=first_name,
+            last_name=last_name,
+            username=username,
+            language_code=language_code,
+        ),
+        "event_chat": _PRIVATE_CHAT,
     }
 
 
@@ -473,14 +490,52 @@ class TestUserSync:
         await sync(handler=handler, event=_EVENT, data=_tg_user(language_code=language_code))
         assert repo.return_value.upsert.await_args.kwargs["user"].locale == locale
 
+    async def test_text_fields_are_cut_to_column_sizes(
+        self, sync: UserSyncMiddleware, repo: MagicMock, handler: _HandlerSpy
+    ) -> None:
+        """
+        Username, first and last name longer than their columns are cut to 32, 64 and 64 characters.
+
+        :param sync: The UserSyncMiddleware fixture.
+        :param repo: The mock UserRepo class.
+        :param handler: The handler spy fixture.
+        :return: None
+        """
+        data: dict[str, Any] = _tg_user(first_name="f" * 70, last_name="l" * 70, username="u" * 40)
+        await sync(handler=handler, event=_EVENT, data=data)
+        user: TgUser = repo.return_value.upsert.await_args.kwargs["user"]
+        assert (user.first_name, user.last_name, user.username) == ("f" * 64, "l" * 64, "u" * 32)
+
+    async def test_missing_optional_fields_are_null(
+        self, sync: UserSyncMiddleware, repo: MagicMock, handler: _HandlerSpy
+    ) -> None:
+        """
+        A user without a last name or a username is stored with NULL in those columns.
+
+        :param sync: The UserSyncMiddleware fixture.
+        :param repo: The mock UserRepo class.
+        :param handler: The handler spy fixture.
+        :return: None
+        """
+        await sync(handler=handler, event=_EVENT, data=_tg_user(last_name=None, username=None))
+        user: TgUser = repo.return_value.upsert.await_args.kwargs["user"]
+        assert (user.last_name, user.username) == (None, None)
+
     @pytest.mark.parametrize(
-        "data", [{}, {"event_from_user": User(id=8, is_bot=True, first_name="Bot")}], ids=["no user", "bot"]
+        "data",
+        [
+            {},
+            {"event_from_user": User(id=8, is_bot=True, first_name="Bot"), "event_chat": _PRIVATE_CHAT},
+            {"event_from_user": User(id=7, is_bot=False, first_name="Ann")},
+            {"event_from_user": User(id=7, is_bot=False, first_name="Ann"), "event_chat": Chat(id=-1, type="group")},
+        ],
+        ids=["no user", "bot", "no chat", "group chat"],
     )
-    async def test_no_user_or_bot_skips_the_database(
+    async def test_skips_the_database(
         self, sync: UserSyncMiddleware, repo: MagicMock, handler: _HandlerSpy, data: dict[str, Any]
     ) -> None:
         """
-        An update without a user, or from a bot, goes to the handler without a database write.
+        Updates without a user or chat, from a bot or a non-private chat skip the database write.
 
         :param sync: The UserSyncMiddleware fixture.
         :param repo: The mock UserRepo class.

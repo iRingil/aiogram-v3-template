@@ -7,7 +7,8 @@ from time import monotonic
 from typing import override
 
 from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject, User
+from aiogram.enums import ChatType
+from aiogram.types import Chat, TelegramObject, User
 from asyncpg import InterfaceError, PostgresError
 
 from tgbot.config import logger
@@ -66,7 +67,7 @@ class AntiFloodMiddleware(BaseMiddleware):
 
 class UserSyncMiddleware(BaseMiddleware):
     """
-    Writes the sending user to the users table once per UTC day.
+    Writes the sending user of a private chat to the users table once per UTC day.
 
     The first update of the day upserts the profile fields and last_seen_on (and creates the row for a
     new user); later updates of that day skip the database. The "synced today" set lives in memory, so
@@ -96,11 +97,13 @@ class UserSyncMiddleware(BaseMiddleware):
 
         :param handler: Wrapped handler in the middlewares chain.
         :param event: Incoming event.
-        :param data: Contextual data, expected to already contain "event_from_user".
+        :param data: Contextual data, expected to already contain "event_from_user" and "event_chat".
         :return: The handler's result.
         """
+        # Only users of private chats; a callback without a message has no chat and is skipped too
         user: object = data.get("event_from_user")
-        if isinstance(user, User) and not user.is_bot:
+        chat: object = data.get("event_chat")
+        if isinstance(user, User) and not user.is_bot and isinstance(chat, Chat) and chat.type == ChatType.PRIVATE:
             await self._sync(user=user)
         return await handler(event, data)
 
@@ -119,12 +122,13 @@ class UserSyncMiddleware(BaseMiddleware):
         if user.id in self._synced:
             return
         # 2. Upsert; on failure the user stays unsynced, so the next update retries
+        # Text fields are cut to the column sizes of users, so an unexpected long value can't fail the insert
         tg_user: TgUser = TgUser(
             id=user.id,
-            username=user.username,
-            first_name=user.first_name,
-            last_name=user.last_name,
-            # users.locale is VARCHAR(2): a longer IETF tag ("pt-br") is cut to its first two characters
+            username=user.username[:32] if user.username else None,
+            first_name=user.first_name[:64],
+            last_name=user.last_name[:64] if user.last_name else None,
+            # A longer IETF tag ("pt-br") keeps its first two characters
             locale=user.language_code[:2] if user.language_code else None,
             registered_on=today,
             last_seen_on=today,
