@@ -1,19 +1,17 @@
 """Unit tests for src/tgbot/config.py."""
 
-# ruff: noqa: PLR2004, S101, S105
+# ruff: noqa: PLR2004, S101
 
 import os
 import sys
 from collections.abc import Generator, Sequence
 from pathlib import Path
-from typing import Any
 
 import pytest
 from environs import EnvError
-from redis.asyncio import ConnectionPool, Redis
 
 from tgbot.config import Config
-from tgbot.misc.dataclasses import Paths, WebhookCredentials
+from tgbot.misc.dataclasses import Paths, PostgresCredentials, RedisCredentials, WebhookCredentials
 
 __all__: tuple[str, ...] = ()
 
@@ -26,7 +24,13 @@ ENV_FILE_CONTENT: str = """
     REDIS_DB_PASS=testpass
     REDIS_DB_USER=testuser_redis
     REDIS_SOCKET_PATH=/var/run/redis/redis-server.sock
-    WEBHOOK_HOST=webhook-host
+    PG_HOST=localhost
+    PG_PORT=5432
+    PG_SOCKET_PATH=/var/run/postgresql/.s.PGSQL.5432
+    PG_DB_NAME=testdb
+    PG_DB_USER=testuser_pg
+    PG_DB_PASS=testpass_pg
+    WEBHOOK_HOST=https://webhook.example.com
     WEBHOOK_PATH=webhook-path
     WEBHOOK_TOKEN=webhook-token
     WEBAPP_HOST=app-host
@@ -90,6 +94,7 @@ def clear_env() -> Generator[None]:
         "USE_WEBHOOK",
         "USE_REDIS",
         "USE_REDIS_SOCKET",
+        "USE_POSTGRES_SOCKET",
         "BOT_TOKEN",
         "ADMIN_IDS",
         "REDIS_HOST",
@@ -98,6 +103,12 @@ def clear_env() -> Generator[None]:
         "REDIS_DB_PASS",
         "REDIS_DB_USER",
         "REDIS_SOCKET_PATH",
+        "PG_HOST",
+        "PG_PORT",
+        "PG_SOCKET_PATH",
+        "PG_DB_NAME",
+        "PG_DB_USER",
+        "PG_DB_PASS",
         "WEBHOOK_HOST",
         "WEBHOOK_PATH",
         "WEBHOOK_TOKEN",
@@ -179,7 +190,7 @@ def test_config_reads_env_variables(config_instance: Config) -> None:
     :param config_instance: Fixture providing a Config instance.
     :return: None
     """
-    assert config_instance.token == "testtoken"
+    assert config_instance.token.get_secret_value() == "testtoken"
     assert config_instance.admins == [123, 456]
 
 
@@ -211,35 +222,56 @@ def test_config_paths(config_instance: Config, tmp_path: Path) -> None:
 )
 def test_config_redis(*, use_redis: bool, use_redis_socket: bool, expect_redis: bool, tmp_path: Path) -> None:
     """
-    Test that Config initializes Redis correctly based on the USE_REDIS and USE_REDIS_SOCKET switches.
+    Test that Config reads the Redis credentials based on the USE_REDIS and USE_REDIS_SOCKET switches.
 
     :param use_redis: Value of USE_REDIS in the .env file.
     :param use_redis_socket: Value of USE_REDIS_SOCKET in the .env file.
-    :param expect_redis: Whether Redis should be initialized (True) or not (False).
+    :param expect_redis: Whether the Redis credentials should be read (True) or not (False).
     :param tmp_path: Temporary directory provided by pytest.
     :return: None
     """
     _write_env(tmp_path=tmp_path, flags=f"USE_REDIS={use_redis}\nUSE_REDIS_SOCKET={use_redis_socket}")
     config: Config = Config(base_dir=tmp_path)
     if expect_redis:
-        redis = config.redis
-        assert isinstance(redis, Redis)
-        pool = redis.connection_pool
-        assert isinstance(pool, ConnectionPool)
-        conn_kwargs: dict[str, Any] = pool.connection_kwargs
+        redis: RedisCredentials | None = config.redis
+        assert isinstance(redis, RedisCredentials)
         if use_redis_socket:
-            assert conn_kwargs.get("path") == "/var/run/redis/redis-server.sock"
-            assert conn_kwargs.get("host") is None
-            assert conn_kwargs.get("port") is None
+            assert redis.socket_path == Path("/var/run/redis/redis-server.sock")
+            assert redis.host is None
+            assert redis.port is None
         else:
-            assert conn_kwargs.get("host") == "localhost"
-            assert conn_kwargs.get("port") == 6379
-            assert conn_kwargs.get("path") is None
-        assert conn_kwargs.get("db") == 0
-        assert conn_kwargs.get("password") == "testpass"
-        assert conn_kwargs.get("username") == "testuser_redis"
+            assert redis.host == "localhost"
+            assert redis.port == 6379
+            assert redis.socket_path is None
+        assert redis.db == 0
+        assert redis.user == "testuser_redis"
+        assert redis.password.get_secret_value() == "testpass"
     else:
         assert config.redis is None
+
+
+@pytest.mark.parametrize("use_socket", [False, True])
+def test_config_postgres(*, use_socket: bool, tmp_path: Path) -> None:
+    """
+    Test that Config reads the PostgreSQL credentials, over a socket or a host and port by USE_POSTGRES_SOCKET.
+
+    :param use_socket: Value of USE_POSTGRES_SOCKET in the .env file.
+    :param tmp_path: Temporary directory provided by pytest.
+    :return: None
+    """
+    _write_env(tmp_path=tmp_path, flags=f"USE_POSTGRES_SOCKET={use_socket}")
+    postgres: PostgresCredentials = Config(base_dir=tmp_path).postgres
+    if use_socket:
+        assert postgres.socket_path == Path("/var/run/postgresql/.s.PGSQL.5432")
+        assert postgres.host is None
+        assert postgres.port is None
+    else:
+        assert postgres.host == "localhost"
+        assert postgres.port == 5432
+        assert postgres.socket_path is None
+    assert postgres.database == "testdb"
+    assert postgres.user == "testuser_pg"
+    assert postgres.password.get_secret_value() == "testpass_pg"
 
 
 @pytest.mark.parametrize(("use_webhook", "expect_webhook"), [(False, False), (True, True)])
@@ -257,9 +289,9 @@ def test_config_webhook(*, use_webhook: bool, expect_webhook: bool, tmp_path: Pa
     if expect_webhook:
         webhook = config.webhook
         assert isinstance(webhook, WebhookCredentials)
-        assert webhook.wh_host == "webhook-host"
+        assert str(webhook.wh_host) == "https://webhook.example.com/"
         assert webhook.wh_path == "webhook-path"
-        assert webhook.wh_token == "webhook-token"
+        assert webhook.wh_token.get_secret_value() == "webhook-token"
         assert webhook.app_host == "app-host"
         assert webhook.app_port == 8080
     else:
@@ -276,6 +308,7 @@ def test_config_webhook(*, use_webhook: bool, expect_webhook: bool, tmp_path: Pa
         (["ADMIN_IDS"], "Admin IDs not found"),
         (["BOT_TOKEN"], "BOT_TOKEN not found"),
         (["REDIS_HOST"], "Redis credentials not found"),
+        (["PG_DB_NAME"], "PostgreSQL credentials not found"),
         (["WEBHOOK_HOST"], "Webhook credentials not found"),
     ],
 )
@@ -302,6 +335,44 @@ def test_config_missing_redis_socket_path(tmp_path: Path) -> None:
     """
     _write_env(tmp_path=tmp_path, flags="USE_REDIS=true\nUSE_REDIS_SOCKET=true", vars_to_remove=["REDIS_SOCKET_PATH"])
     with pytest.raises(expected_exception=EnvError, match="Redis credentials not found"):
+        Config(base_dir=tmp_path)
+
+
+def test_config_missing_postgres_socket_path(tmp_path: Path) -> None:
+    """
+    Test missing socket path when USE_POSTGRES_SOCKET is true.
+
+    :param tmp_path: Temporary directory provided by pytest.
+    :return: None
+    """
+    _write_env(tmp_path=tmp_path, flags="USE_POSTGRES_SOCKET=true", vars_to_remove=["PG_SOCKET_PATH"])
+    with pytest.raises(expected_exception=EnvError, match="PostgreSQL credentials not found"):
+        Config(base_dir=tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("var", "value", "error_message_match"),
+    [
+        ("ADMIN_IDS", "0", "Admin IDs not found or invalid"),
+        ("REDIS_PORT", "0", "Redis credentials not found or invalid"),
+        ("PG_HOST", "bad host!", "PostgreSQL credentials not found or invalid"),
+        ("WEBHOOK_HOST", "http://webhook.example.com", "Webhook credentials not found or invalid"),
+    ],
+)
+def test_config_invalid_env_var(*, var: str, value: str, error_message_match: str, tmp_path: Path) -> None:
+    """
+    Test that Config raises EnvError when a variable is present but fails validation.
+
+    :param var: Variable to replace with an invalid value.
+    :param value: The invalid value.
+    :param error_message_match: Expected substring in the error message.
+    :param tmp_path: Temporary directory provided by pytest.
+    :return: None
+    """
+    _write_env(tmp_path=tmp_path, flags="USE_REDIS=true\nUSE_WEBHOOK=true", vars_to_remove=[var])
+    env_path: Path = Path(tmp_path.parent, ".env")
+    env_path.write_text(data=f"{env_path.read_text(encoding='utf-8')}\n{var}={value}", encoding="utf-8")
+    with pytest.raises(expected_exception=EnvError, match=error_message_match):
         Config(base_dir=tmp_path)
 
 

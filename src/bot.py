@@ -1,7 +1,7 @@
 """Main program module."""
 
 from asyncio import run
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -14,14 +14,20 @@ from aiohttp.web import run_app
 from aiohttp.web_app import Application
 
 from tgbot.config import Config, logger
+from tgbot.db.client import PostgresClient
+from tgbot.db.schema import Schema
 from tgbot.handlers.main import MainHandler
 from tgbot.misc.bot_commands import BotCommands
 from tgbot.misc.broadcaster import Broadcaster
 from tgbot.misc.keyboards import KeyboardManager
 from tgbot.misc.log_setup import LoggingManager
-from tgbot.misc.middlewares import AntiFloodMiddleware
+from tgbot.misc.middlewares import AntiFloodMiddleware, UserSyncMiddleware
 from tgbot.misc.scheduler import Scheduler
 from tgbot.misc.tmpl_render import TmplRender
+from tgbot.storage.redis_client import RedisClient
+
+if TYPE_CHECKING:
+    from tgbot.misc.dataclasses import RedisCredentials
 
 __all__: tuple[str, ...] = ()
 
@@ -45,19 +51,22 @@ class TgBot:
         """
         self._config: Config = config
         self._bot: Bot = Bot(
-            token=self._config.token,
+            token=self._config.token.get_secret_value(),
             default=DefaultBotProperties(
                 parse_mode=ParseMode.HTML, allow_sending_without_reply=True, link_preview_is_disabled=True
             ),
         )
-        redis = self._config.redis
+        redis: RedisCredentials | None = self._config.redis
         storage: MemoryStorage | RedisStorage = (
-            RedisStorage(redis=redis, key_builder=DefaultKeyBuilder(prefix="tgbot_fsm"))
+            RedisStorage(redis=RedisClient(credentials=redis).redis, key_builder=DefaultKeyBuilder(prefix="tgbot_fsm"))
             if redis is not None
             else MemoryStorage()
         )
         self._dp: Dispatcher = Dispatcher(storage=storage)
         self._dp.update.outer_middleware(AntiFloodMiddleware())
+        self._db: PostgresClient = PostgresClient(credentials=self._config.postgres)
+        # After the anti-flood middleware, so the updates it drops don't reach the database
+        self._dp.update.outer_middleware(UserSyncMiddleware(client=self._db))
         self._broadcaster: Broadcaster = Broadcaster(bot=self._bot)
         self._tmpl: TmplRender = TmplRender(paths=self._config.paths)
         self._kb: KeyboardManager = KeyboardManager(tmpl=self._tmpl)
@@ -69,15 +78,18 @@ class TgBot:
 
         :return: None
         """
+        await self._db.connect()
+        await Schema(client=self._db).create()
         bot_commands: BotCommands = BotCommands(bot=self._bot, tmpl_render=self._tmpl, admin_ids=self._config.admins)
         await bot_commands.set_commands()
         self._scheduler.start()
         if (webhook := self._config.webhook) is not None:
             await self._bot.set_webhook(
-                url=f"{webhook.wh_host}/{webhook.wh_path}",
+                # str(HttpUrl) ends with "/" when the URL has no path
+                url=f"{str(webhook.wh_host).rstrip('/')}/{webhook.wh_path}",
                 allowed_updates=self._ALLOWED_UPDATES,
                 drop_pending_updates=False,
-                secret_token=webhook.wh_token,
+                secret_token=webhook.wh_token.get_secret_value(),
             )
         await self._broadcaster.broadcast(users_ids=self._config.admins, msg="Bot was started", notify=False)
 
@@ -86,7 +98,7 @@ class TgBot:
         The functions that runs when the bot is stopped.
 
         Stops the scheduler first, waiting for a running job to finish (Scheduler.shutdown waits by
-        default), before closing the FSM storage a job might still be using. The bot session is left
+        default), before closing the database and the FSM storage a job might still be using. The bot session is left
         to aiogram, which closes it after this hook: closing it here would cut the long-polling
         request that is still waiting for updates.
 
@@ -96,6 +108,7 @@ class TgBot:
         if self._config.webhook:
             await self._bot.delete_webhook()
         await self._broadcaster.broadcast(users_ids=self._config.admins, msg="Bot was stopped", notify=False)
+        await self._db.close()
         await self._dp.storage.close()
 
     def run(self) -> None:
@@ -109,9 +122,9 @@ class TgBot:
         self._dp.shutdown.register(callback=self._on_shutdown)
         if (webhook := self._config.webhook) is not None:
             app: Application = Application()
-            SimpleRequestHandler(dispatcher=self._dp, bot=self._bot, secret_token=webhook.wh_token).register(
-                app, path=f"/{webhook.wh_path}"
-            )
+            SimpleRequestHandler(
+                dispatcher=self._dp, bot=self._bot, secret_token=webhook.wh_token.get_secret_value()
+            ).register(app, path=f"/{webhook.wh_path}")
             setup_application(app, self._dp)
             run_app(app=app, host=webhook.app_host, port=webhook.app_port)
         else:

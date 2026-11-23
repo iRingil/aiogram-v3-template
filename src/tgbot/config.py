@@ -5,9 +5,9 @@ from pathlib import Path
 
 from environs import Env, EnvError
 from loguru import logger
-from redis.asyncio import Redis
+from pydantic import PositiveInt, SecretStr, TypeAdapter, ValidationError
 
-from tgbot.misc.dataclasses import Paths, WebhookCredentials
+from tgbot.misc.dataclasses import Paths, PostgresCredentials, RedisCredentials, WebhookCredentials
 
 __all__: tuple[str, ...] = ("Config", "logger")
 
@@ -21,7 +21,8 @@ class Config:
 
     The mode switches are read from it too, all false when absent: DEBUG (verbose logging and full
     tracebacks), USE_WEBHOOK (a webhook instead of long polling), USE_REDIS (Redis FSM storage
-    instead of memory) and USE_REDIS_SOCKET (connect to Redis over a Unix socket).
+    instead of memory), USE_REDIS_SOCKET (connect to Redis over a Unix socket) and
+    USE_POSTGRES_SOCKET (connect to PostgreSQL over a Unix socket).
     """
 
     def __init__(self, *, base_dir: Path = _BASE_DIR) -> None:
@@ -42,11 +43,14 @@ class Config:
         self._log_dir: Path = Path(base_dir, "../logs")
         self._admins: list[int] = self._get_admins()
         self._paths: Paths = self._get_paths(base_dir=base_dir)
-        self._redis: Redis | None = self._get_redis(
+        self._redis: RedisCredentials | None = self._get_redis(
             use_redis=self._env.bool("USE_REDIS", default=False),
             use_socket=self._env.bool("USE_REDIS_SOCKET", default=False),
         )
-        self._token: str = self._get_token()
+        self._postgres: PostgresCredentials = self._get_postgres(
+            use_socket=self._env.bool("USE_POSTGRES_SOCKET", default=False)
+        )
+        self._token: SecretStr = self._get_token()
         self._webhook: WebhookCredentials | None = self._get_webhook(
             use_webhook=self._env.bool("USE_WEBHOOK", default=False)
         )
@@ -83,12 +87,12 @@ class Config:
         Returns the list of bot admin IDs.
 
         :return: list of bot admin IDs.
-        :raises EnvError: if the admin IDs are not found in the .env file.
+        :raises EnvError: if the admin IDs are not found in the .env file or are not positive integers.
         """
         try:
-            return self._env.list("ADMIN_IDS", subcast=int)
-        except EnvError as exc:
-            raise EnvError(f"Admin IDs not found in the .env file: {exc!r}") from exc
+            return TypeAdapter(list[PositiveInt]).validate_python(self._env.list("ADMIN_IDS", subcast=int))
+        except (EnvError, ValidationError) as exc:
+            raise EnvError(f"Admin IDs not found or invalid in the .env file: {exc!r}") from exc
 
     @staticmethod
     def _get_paths(base_dir: Path) -> Paths:
@@ -116,40 +120,74 @@ class Config:
         """
         return self._paths
 
-    def _get_redis(self, *, use_redis: bool, use_socket: bool) -> Redis | None:
+    def _get_redis(self, *, use_redis: bool, use_socket: bool) -> RedisCredentials | None:
         """
-        Returns an instance of the Redis class to connect to the database.
+        Returns the Redis connection parameters.
 
         :param use_redis: True, if Redis is used, otherwise False.
         :param use_socket: True, if a Redis socket is used, otherwise False.
-        :return: Redis instance or None.
-        :raises EnvError: if the Redis credentials are not found in the .env file.
+        :return: RedisCredentials or None.
+        :raises EnvError: if the Redis credentials are not found in the .env file or are invalid.
         """
         if not use_redis:
             return None
         try:
-            db: int = self._env.int("REDIS_DB_INDEX")
-            password: str = self._env.str("REDIS_DB_PASS")
-            username: str = self._env.str("REDIS_DB_USER")
+            values: dict[str, object] = {
+                "db": self._env.int("REDIS_DB_INDEX"),
+                "user": self._env.str("REDIS_DB_USER"),
+                "password": self._env.str("REDIS_DB_PASS"),
+            }
             if use_socket:
-                unix_socket_path: str = self._env.str("REDIS_SOCKET_PATH")
-                return Redis(db=db, password=password, unix_socket_path=unix_socket_path, username=username)
-            host: str = self._env.str("REDIS_HOST")
-            port: int = self._env.int("REDIS_PORT")
-        except EnvError as exc:
-            raise EnvError(f"Redis credentials not found in the .env file: {exc!r}") from exc
-        return Redis(host=host, port=port, db=db, password=password, username=username)
+                values["socket_path"] = self._env.str("REDIS_SOCKET_PATH")
+            else:
+                values["host"] = self._env.str("REDIS_HOST")
+                values["port"] = self._env.int("REDIS_PORT")
+            return RedisCredentials.model_validate(values)
+        except (EnvError, ValidationError) as exc:
+            raise EnvError(f"Redis credentials not found or invalid in the .env file: {exc!r}") from exc
 
     @property
-    def redis(self) -> Redis | None:
+    def redis(self) -> RedisCredentials | None:
         """
-        Returns an instance of the Redis class to connect to the database.
+        Returns the Redis connection parameters.
 
-        :return: Redis instance or None.
+        :return: RedisCredentials or None.
         """
         return self._redis
 
-    def _get_token(self) -> str:
+    def _get_postgres(self, *, use_socket: bool) -> PostgresCredentials:
+        """
+        Returns the PostgreSQL connection parameters.
+
+        :param use_socket: True, if a PostgreSQL socket is used, otherwise False.
+        :return: PostgresCredentials.
+        :raises EnvError: if the PostgreSQL credentials are not found in the .env file or are invalid.
+        """
+        try:
+            values: dict[str, object] = {
+                "database": self._env.str("PG_DB_NAME"),
+                "user": self._env.str("PG_DB_USER"),
+                "password": self._env.str("PG_DB_PASS"),
+            }
+            if use_socket:
+                values["socket_path"] = self._env.str("PG_SOCKET_PATH")
+            else:
+                values["host"] = self._env.str("PG_HOST")
+                values["port"] = self._env.int("PG_PORT")
+            return PostgresCredentials.model_validate(values)
+        except (EnvError, ValidationError) as exc:
+            raise EnvError(f"PostgreSQL credentials not found or invalid in the .env file: {exc!r}") from exc
+
+    @property
+    def postgres(self) -> PostgresCredentials:
+        """
+        Returns the PostgreSQL connection parameters.
+
+        :return: PostgresCredentials.
+        """
+        return self._postgres
+
+    def _get_token(self) -> SecretStr:
         """
         Returns the bot token or terminates the program in case of an error.
 
@@ -157,12 +195,12 @@ class Config:
         :raises EnvError: if the bot token is not found in the .env file.
         """
         try:
-            return self._env.str("BOT_TOKEN")
+            return SecretStr(self._env.str("BOT_TOKEN"))
         except EnvError as exc:
             raise EnvError(f"BOT_TOKEN not found: {exc!r}") from exc
 
     @property
-    def token(self) -> str:
+    def token(self) -> SecretStr:
         """
         Returns the bot token.
 
@@ -176,20 +214,22 @@ class Config:
 
         :param use_webhook: True, if webhook is used, otherwise False.
         :return: WebhookCredentials or None.
-        :raises EnvError: if the webhook credentials are not found in the .env file.
+        :raises EnvError: if the webhook credentials are not found in the .env file or are invalid.
         """
         if not use_webhook:
             return None
         try:
-            return WebhookCredentials(
-                wh_host=self._env.str("WEBHOOK_HOST"),
-                wh_path=self._env.str("WEBHOOK_PATH"),
-                wh_token=self._env.str("WEBHOOK_TOKEN"),
-                app_host=self._env.str("WEBAPP_HOST"),
-                app_port=self._env.int("WEBAPP_PORT"),
+            return WebhookCredentials.model_validate(
+                {
+                    "wh_host": self._env.str("WEBHOOK_HOST"),
+                    "wh_path": self._env.str("WEBHOOK_PATH"),
+                    "wh_token": self._env.str("WEBHOOK_TOKEN"),
+                    "app_host": self._env.str("WEBAPP_HOST"),
+                    "app_port": self._env.int("WEBAPP_PORT"),
+                }
             )
-        except EnvError as exc:
-            raise EnvError(f"Webhook credentials not found in the .env file: {exc!r}") from exc
+        except (EnvError, ValidationError) as exc:
+            raise EnvError(f"Webhook credentials not found or invalid in the .env file: {exc!r}") from exc
 
     @property
     def webhook(self) -> WebhookCredentials | None:

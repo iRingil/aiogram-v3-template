@@ -1,6 +1,6 @@
 """Unit tests for src/bot.py."""
 
-# ruff: noqa: S101, S105, S106, SLF001
+# ruff: noqa: S101, S106, SLF001
 
 from asyncio import sleep
 from collections.abc import Iterator
@@ -10,18 +10,31 @@ import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage
+from pydantic import SecretStr
 
 # noinspection PyProtectedMember
 from bot import TgBot, main
 from tests.helpers import mocked
 from tgbot.config import Config
+from tgbot.db.client import PostgresClient
 from tgbot.misc.broadcaster import Broadcaster
+from tgbot.misc.dataclasses import PostgresCredentials, RedisCredentials, WebhookCredentials
 from tgbot.misc.keyboards import KeyboardManager
-from tgbot.misc.middlewares import AntiFloodMiddleware
+from tgbot.misc.middlewares import AntiFloodMiddleware, UserSyncMiddleware
 from tgbot.misc.scheduler import Scheduler
 from tgbot.misc.tmpl_render import TmplRender
 
 __all__: tuple[str, ...] = ()
+
+_WEBHOOK: WebhookCredentials = WebhookCredentials.model_validate(
+    {
+        "wh_host": "https://example.com",
+        "wh_path": "webhook_path",
+        "wh_token": "mock_token",
+        "app_host": "localhost",
+        "app_port": 8080,
+    }
+)
 
 
 # noinspection PyProtectedMember
@@ -33,8 +46,14 @@ def tg_bot() -> Iterator[TgBot]:
     :return: TgBot instance.
     """
     config: MagicMock = MagicMock(spec=Config)
-    config.token = "mock_token"
-    config.redis = MagicMock()  # Enable Redis to use RedisStorage
+    config.token = SecretStr("mock_token")
+    # Redis credentials enable RedisStorage
+    config.redis = RedisCredentials.model_validate(
+        {"host": "localhost", "port": 6379, "db": 0, "user": "user", "password": "pass"}
+    )
+    config.postgres = PostgresCredentials.model_validate(
+        {"host": "localhost", "port": 5432, "database": "db", "user": "user", "password": "pass"}
+    )
     config.admins = [123, 456]
     config.paths = MagicMock()
     config.webhook = None
@@ -65,7 +84,10 @@ def test_init(tg_bot: TgBot) -> None:
     assert isinstance(tg_bot._kb, KeyboardManager)
     assert isinstance(tg_bot._scheduler, Scheduler)
     assert isinstance(tg_bot._dp.storage, RedisStorage)
-    assert any(isinstance(middleware, AntiFloodMiddleware) for middleware in tg_bot._dp.update.outer_middleware)
+    assert isinstance(tg_bot._db, PostgresClient)
+    # The user sync goes after the anti-flood middleware, so dropped updates don't reach the database
+    middleware_types: list[type] = [type(middleware) for middleware in tg_bot._dp.update.outer_middleware]
+    assert middleware_types.index(AntiFloodMiddleware) < middleware_types.index(UserSyncMiddleware)
     assert tg_bot._bot.default == DefaultBotProperties(
         parse_mode="HTML", allow_sending_without_reply=True, link_preview_is_disabled=True
     )
@@ -84,9 +106,17 @@ async def test_on_startup_polling(tg_bot: TgBot) -> None:
     tg_bot._scheduler.start = MagicMock()
     mock_bot_commands: MagicMock = MagicMock()
     mock_bot_commands.set_commands = AsyncMock()
+    tg_bot._db.connect = AsyncMock()
     mocked(tg_bot._config).webhook = None
-    with patch(target="bot.BotCommands", return_value=mock_bot_commands):
+    with (
+        patch(target="bot.BotCommands", return_value=mock_bot_commands),
+        patch(target="bot.Schema") as mock_schema,
+    ):
+        mock_schema.return_value.create = AsyncMock()
         await tg_bot._on_startup()
+    tg_bot._db.connect.assert_awaited_once_with()
+    mock_schema.assert_called_once_with(client=tg_bot._db)
+    mock_schema.return_value.create.assert_awaited_once_with()
     tg_bot._broadcaster.broadcast.assert_called_once_with(
         users_ids=tg_bot._config.admins, msg="Bot was started", notify=False
     )
@@ -108,10 +138,13 @@ async def test_on_startup_webhook(tg_bot: TgBot) -> None:
     tg_bot._scheduler.start = MagicMock()
     mock_bot_commands: MagicMock = MagicMock()
     mock_bot_commands.set_commands = AsyncMock()
-    mocked(tg_bot._config).webhook = MagicMock(
-        wh_host="https://example.com", wh_path="webhook_path", wh_token="mock_token"
-    )
-    with patch(target="bot.BotCommands", return_value=mock_bot_commands):
+    tg_bot._db.connect = AsyncMock()
+    mocked(tg_bot._config).webhook = _WEBHOOK
+    with (
+        patch(target="bot.BotCommands", return_value=mock_bot_commands),
+        patch(target="bot.Schema") as mock_schema,
+    ):
+        mock_schema.return_value.create = AsyncMock()
         await tg_bot._on_startup()
     tg_bot._broadcaster.broadcast.assert_called_once_with(
         users_ids=tg_bot._config.admins, msg="Bot was started", notify=False
@@ -136,6 +169,7 @@ async def test_on_shutdown_polling(tg_bot: TgBot) -> None:
     :return: None
     """
     tg_bot._broadcaster.broadcast = AsyncMock()
+    tg_bot._db.close = AsyncMock()
     mocked(tg_bot._config).webhook = None
     with (
         patch.object(target=tg_bot._scheduler, attribute="shutdown") as mock_shutdown,
@@ -147,6 +181,7 @@ async def test_on_shutdown_polling(tg_bot: TgBot) -> None:
         users_ids=tg_bot._config.admins, msg="Bot was stopped", notify=False
     )
     mocked(tg_bot._bot.delete_webhook).assert_not_called()
+    tg_bot._db.close.assert_awaited_once_with()
     mock_storage_close.assert_awaited_once_with()
     mocked(tg_bot._bot.session.close).assert_not_called()  # aiogram closes the session itself
 
@@ -162,7 +197,8 @@ async def test_on_shutdown_webhook(tg_bot: TgBot) -> None:
     """
     tg_bot._broadcaster.broadcast = AsyncMock()
     tg_bot._bot.delete_webhook = AsyncMock()
-    mocked(tg_bot._config).webhook = MagicMock()
+    tg_bot._db.close = AsyncMock()
+    mocked(tg_bot._config).webhook = _WEBHOOK
     with (
         patch.object(target=tg_bot._scheduler, attribute="shutdown") as mock_shutdown,
         patch.object(target=tg_bot._dp.storage, attribute="close") as mock_storage_close,
@@ -173,6 +209,7 @@ async def test_on_shutdown_webhook(tg_bot: TgBot) -> None:
         users_ids=tg_bot._config.admins, msg="Bot was stopped", notify=False
     )
     tg_bot._bot.delete_webhook.assert_called_once()
+    tg_bot._db.close.assert_awaited_once_with()
     mock_storage_close.assert_awaited_once_with()
 
 
@@ -213,9 +250,7 @@ async def test_run_webhook(tg_bot: TgBot) -> None:
         patch(target="bot.SimpleRequestHandler") as mock_handler,
         patch(target="bot.setup_application") as mock_setup,
     ):
-        mocked(tg_bot._config).webhook = MagicMock(
-            wh_path="webhook_path", wh_token="mock_token", app_host="localhost", app_port=8080
-        )
+        mocked(tg_bot._config).webhook = _WEBHOOK
         tg_bot.run()
         await sleep(delay=0.1)
         mock_handler.assert_called_once_with(dispatcher=tg_bot._dp, bot=tg_bot._bot, secret_token="mock_token")

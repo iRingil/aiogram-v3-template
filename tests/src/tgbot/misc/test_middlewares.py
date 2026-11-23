@@ -1,20 +1,26 @@
 """
-Unit tests for src/tgbot/misc/middlewares.py (AntiFloodMiddleware).
+Unit tests for src/tgbot/misc/middlewares.py (AntiFloodMiddleware and UserSyncMiddleware).
 
 The middleware's only real dependency is time.monotonic - replaced here with _FakeClock, a
 controllable stand-in tests advance explicitly. The wrapped handler is a scripted async spy
 (_HandlerSpy) rather than a mock, since it has no real external dependency of its own either.
+UserSyncMiddleware gets a fake UTC date and a mocked UserRepo.
 """
 
-# ruff: noqa: S101, SLF001
+# ruff: noqa: PLR2004, S101, SLF001
 
+from collections.abc import Iterator
+from datetime import date
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiogram.types import TelegramObject, User
+from asyncpg import PostgresError
 
 from tgbot.misc import middlewares
-from tgbot.misc.middlewares import AntiFloodMiddleware
+from tgbot.misc.dataclasses import TgUser
+from tgbot.misc.middlewares import AntiFloodMiddleware, UserSyncMiddleware
 
 __all__: tuple[str, ...] = ()
 
@@ -302,3 +308,207 @@ class TestSlidingWindowExpiry:
         result: Any = await middleware(handler=handler, event=_EVENT, data=data)
         assert result is None
         assert len(handler.calls) == limit + 1
+
+
+# region UserSyncMiddleware
+_DAY_1: date = date(year=2026, month=1, day=1)
+_DAY_2: date = date(year=2026, month=1, day=2)
+
+
+class _FakeToday:
+    """A stand-in for middlewares.datetime whose now().date() returns a date the test sets."""
+
+    def __init__(self, today: date) -> None:
+        """
+        Sets the date now() reports.
+
+        :param today: The current UTC date.
+        """
+        self.today: date = today
+
+    def now(self, tz: object) -> MagicMock:
+        """
+        Returns an object whose date() is the current fake date.
+
+        :param tz: Time zone the middleware asks for; ignored.
+        :return: A mock with date() returning the fake date.
+        """
+        del tz
+        moment: MagicMock = MagicMock()
+        moment.date.return_value = self.today
+        return moment
+
+
+@pytest.fixture(name="today")
+def today_fixture(monkeypatch: pytest.MonkeyPatch) -> _FakeToday:
+    """
+    Replaces middlewares.datetime with a fake clock starting on _DAY_1.
+
+    :param monkeypatch: pytest fixture used to patch middlewares.datetime.
+    :return: The fake clock.
+    """
+    today: _FakeToday = _FakeToday(today=_DAY_1)
+    monkeypatch.setattr(target=middlewares, name="datetime", value=today)
+    return today
+
+
+@pytest.fixture(name="repo")
+def repo_fixture() -> Iterator[MagicMock]:
+    """
+    Replaces UserRepo in the middleware module with a mock class whose instances have an awaitable upsert().
+
+    :return: The mock UserRepo class.
+    """
+    with patch.object(target=middlewares, attribute="UserRepo") as repo_cls:
+        repo_cls.return_value.upsert = AsyncMock()
+        yield repo_cls
+
+
+@pytest.fixture(name="sync")
+def sync_fixture(today: _FakeToday) -> UserSyncMiddleware:
+    """
+    A fresh UserSyncMiddleware with a mock PostgreSQL client, created on the fake date.
+
+    :param today: The fake clock, set before the middleware reads the date.
+    :return: The UserSyncMiddleware instance under test.
+    """
+    del today
+    return UserSyncMiddleware(client=MagicMock())
+
+
+def _tg_user(language_code: str | None = "en") -> dict[str, Any]:
+    """
+    Builds a data dict with a full Telegram user.
+
+    :param language_code: The language code Telegram reports.
+    :return: A data dict with "event_from_user".
+    """
+    return {
+        "event_from_user": User(
+            id=7, is_bot=False, first_name="Ann", last_name="Lee", username="ann", language_code=language_code
+        )
+    }
+
+
+class TestUserSync:
+    """Tests UserSyncMiddleware: one upsert per user per UTC day, never blocking the handler."""
+
+    async def test_first_update_upserts(self, sync: UserSyncMiddleware, repo: MagicMock, handler: _HandlerSpy) -> None:
+        """
+        The first update of the day upserts the user with today as both dates, then calls the handler.
+
+        :param sync: The UserSyncMiddleware fixture.
+        :param repo: The mock UserRepo class.
+        :param handler: The handler spy fixture.
+        :return: None
+        """
+        result: Any = await sync(handler=handler, event=_EVENT, data=_tg_user())
+        assert result == "handled"
+        repo.return_value.upsert.assert_awaited_once_with(
+            user=TgUser(
+                id=7,
+                username="ann",
+                first_name="Ann",
+                last_name="Lee",
+                locale="en",
+                registered_on=_DAY_1,
+                last_seen_on=_DAY_1,
+            )
+        )
+
+    @pytest.mark.usefixtures("today")
+    async def test_same_day_skips_the_database(
+        self, sync: UserSyncMiddleware, repo: MagicMock, handler: _HandlerSpy
+    ) -> None:
+        """
+        Later updates of the same day don't touch the database.
+
+        :param sync: The UserSyncMiddleware fixture.
+        :param repo: The mock UserRepo class.
+        :param handler: The handler spy fixture.
+        :return: None
+        """
+        await sync(handler=handler, event=_EVENT, data=_tg_user())
+        await sync(handler=handler, event=_EVENT, data=_tg_user())
+        repo.return_value.upsert.assert_awaited_once()
+        assert len(handler.calls) == 2
+
+    async def test_new_day_upserts_again(
+        self, sync: UserSyncMiddleware, repo: MagicMock, handler: _HandlerSpy, today: _FakeToday
+    ) -> None:
+        """
+        On a new UTC day the user is upserted once more, with the new date.
+
+        :param sync: The UserSyncMiddleware fixture.
+        :param repo: The mock UserRepo class.
+        :param handler: The handler spy fixture.
+        :param today: The fake clock.
+        :return: None
+        """
+        await sync(handler=handler, event=_EVENT, data=_tg_user())
+        today.today = _DAY_2
+        await sync(handler=handler, event=_EVENT, data=_tg_user())
+        assert repo.return_value.upsert.await_count == 2
+        assert repo.return_value.upsert.await_args.kwargs["user"].last_seen_on == _DAY_2
+
+    @pytest.mark.parametrize(("language_code", "locale"), [("pt-br", "pt"), ("en", "en"), (None, None), ("", None)])
+    async def test_locale_is_cut_to_two_characters(
+        self,
+        sync: UserSyncMiddleware,
+        repo: MagicMock,
+        handler: _HandlerSpy,
+        language_code: str | None,
+        locale: str | None,
+    ) -> None:
+        """
+        The language code is cut to its first two characters; a missing or empty one is stored as NULL.
+
+        :param sync: The UserSyncMiddleware fixture.
+        :param repo: The mock UserRepo class.
+        :param handler: The handler spy fixture.
+        :param language_code: The language code Telegram reports.
+        :param locale: The locale expected in the database.
+        :return: None
+        """
+        await sync(handler=handler, event=_EVENT, data=_tg_user(language_code=language_code))
+        assert repo.return_value.upsert.await_args.kwargs["user"].locale == locale
+
+    @pytest.mark.parametrize(
+        "data", [{}, {"event_from_user": User(id=8, is_bot=True, first_name="Bot")}], ids=["no user", "bot"]
+    )
+    async def test_no_user_or_bot_skips_the_database(
+        self, sync: UserSyncMiddleware, repo: MagicMock, handler: _HandlerSpy, data: dict[str, Any]
+    ) -> None:
+        """
+        An update without a user, or from a bot, goes to the handler without a database write.
+
+        :param sync: The UserSyncMiddleware fixture.
+        :param repo: The mock UserRepo class.
+        :param handler: The handler spy fixture.
+        :param data: The data dict of the update.
+        :return: None
+        """
+        assert await sync(handler=handler, event=_EVENT, data=data) == "handled"
+        repo.return_value.upsert.assert_not_awaited()
+
+    async def test_database_error_is_logged_and_retried(
+        self, sync: UserSyncMiddleware, repo: MagicMock, handler: _HandlerSpy
+    ) -> None:
+        """
+        A database error is logged, the handler still runs, and the next update retries the upsert.
+
+        :param sync: The UserSyncMiddleware fixture.
+        :param repo: The mock UserRepo class.
+        :param handler: The handler spy fixture.
+        :return: None
+        """
+        repo.return_value.upsert.side_effect = [PostgresError("down"), None]
+        with patch.object(target=middlewares, attribute="logger") as mock_logger:
+            assert await sync(handler=handler, event=_EVENT, data=_tg_user()) == "handled"
+            mock_logger.error.assert_called_once()
+        await sync(handler=handler, event=_EVENT, data=_tg_user())
+        assert repo.return_value.upsert.await_count == 2
+        assert len(handler.calls) == 2
+
+
+# endregion
