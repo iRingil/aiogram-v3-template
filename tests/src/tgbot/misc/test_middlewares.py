@@ -4,23 +4,28 @@ Unit tests for src/tgbot/misc/middlewares.py (AntiFloodMiddleware and UserSyncMi
 The middleware's only real dependency is time.monotonic - replaced here with _FakeClock, a
 controllable stand-in tests advance explicitly. The wrapped handler is a scripted async spy
 (_HandlerSpy) rather than a mock, since it has no real external dependency of its own either.
-UserSyncMiddleware gets a fake UTC date and a mocked UserRepo.
+UserSyncMiddleware gets a fake UTC date and writes to the test PostgreSQL.
 """
 
 # ruff: noqa: PLR2004, S101, SLF001
 
-from collections.abc import Iterator
 from datetime import date
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 from aiogram.types import Chat, TelegramObject, User
 from asyncpg import PostgresError
 
+from tgbot.db.pg_client import PostgresClient
+from tgbot.db.schema import Schema
+from tgbot.db.users import UserRepo
 from tgbot.misc import middlewares
 from tgbot.misc.data_types import TgUser
 from tgbot.misc.middlewares import AntiFloodMiddleware, UserSyncMiddleware
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 __all__: tuple[str, ...] = ()
 
@@ -313,6 +318,7 @@ class TestSlidingWindowExpiry:
 # region UserSyncMiddleware
 _DAY_1: date = date(year=2026, month=1, day=1)
 _DAY_2: date = date(year=2026, month=1, day=2)
+_PRIVATE_CHAT: Chat = Chat(id=7, type="private")
 
 
 class _FakeToday:
@@ -352,31 +358,29 @@ def today_fixture(monkeypatch: pytest.MonkeyPatch) -> _FakeToday:
     return today
 
 
-@pytest.fixture(name="repo")
-def repo_fixture() -> Iterator[MagicMock]:
+@pytest.fixture(name="users")
+async def users_fixture(pg_client: PostgresClient) -> UserRepo:
     """
-    Replaces UserRepo in the middleware module with a mock class whose instances have an awaitable upsert().
+    A UserRepo over the test PostgreSQL with an empty users table, to check what the middleware wrote.
 
-    :return: The mock UserRepo class.
+    :param pg_client: The test client.
+    :return: The repository.
     """
-    with patch.object(target=middlewares, attribute="UserRepo") as repo_cls:
-        repo_cls.return_value.upsert = AsyncMock()
-        yield repo_cls
+    await Schema(client=pg_client).create()
+    return UserRepo(db=pg_client.pool)
 
 
 @pytest.fixture(name="sync")
-def sync_fixture(today: _FakeToday) -> UserSyncMiddleware:
+def sync_fixture(today: _FakeToday, pg_client: PostgresClient) -> UserSyncMiddleware:
     """
-    A fresh UserSyncMiddleware with a mock PostgreSQL client, created on the fake date.
+    A fresh UserSyncMiddleware over the test PostgreSQL, created on the fake date.
 
     :param today: The fake clock, set before the middleware reads the date.
+    :param pg_client: The test client.
     :return: The UserSyncMiddleware instance under test.
     """
     del today
-    return UserSyncMiddleware(client=MagicMock())
-
-
-_PRIVATE_CHAT: Chat = Chat(id=7, type="private")
+    return UserSyncMiddleware(client=pg_client)
 
 
 def _tg_user(
@@ -410,69 +414,69 @@ def _tg_user(
 class TestUserSync:
     """Tests UserSyncMiddleware: one upsert per user per UTC day, never blocking the handler."""
 
-    async def test_first_update_upserts(self, sync: UserSyncMiddleware, repo: MagicMock, handler: _HandlerSpy) -> None:
+    async def test_first_update_saves_the_user(
+        self, sync: UserSyncMiddleware, users: UserRepo, handler: _HandlerSpy
+    ) -> None:
         """
-        The first update of the day upserts the user with today as both dates, then calls the handler.
+        The first update of the day saves the user with today as both dates, then calls the handler.
 
         :param sync: The UserSyncMiddleware fixture.
-        :param repo: The mock UserRepo class.
+        :param users: The repository to check the table.
         :param handler: The handler spy fixture.
         :return: None
         """
-        result: Any = await sync(handler=handler, event=_EVENT, data=_tg_user())
-        assert result == "handled"
-        repo.return_value.upsert.assert_awaited_once_with(
-            user=TgUser(
-                id=7,
-                username="ann",
-                first_name="Ann",
-                last_name="Lee",
-                locale="en",
-                registered_on=_DAY_1,
-                last_seen_on=_DAY_1,
-            )
+        assert await sync(handler=handler, event=_EVENT, data=_tg_user()) == "handled"
+        assert await users.get(user_id=7) == TgUser(
+            id=7,
+            username="ann",
+            first_name="Ann",
+            last_name="Lee",
+            locale="en",
+            registered_on=_DAY_1,
+            last_seen_on=_DAY_1,
         )
 
-    @pytest.mark.usefixtures("today")
     async def test_same_day_skips_the_database(
-        self, sync: UserSyncMiddleware, repo: MagicMock, handler: _HandlerSpy
+        self, sync: UserSyncMiddleware, users: UserRepo, handler: _HandlerSpy
     ) -> None:
         """
-        Later updates of the same day don't touch the database.
+        Later updates of the same day don't touch the database: a row deleted meanwhile is not written again.
 
         :param sync: The UserSyncMiddleware fixture.
-        :param repo: The mock UserRepo class.
+        :param users: The repository to check the table.
         :param handler: The handler spy fixture.
         :return: None
         """
         await sync(handler=handler, event=_EVENT, data=_tg_user())
+        await users.delete(user_id=7)
         await sync(handler=handler, event=_EVENT, data=_tg_user())
-        repo.return_value.upsert.assert_awaited_once()
+        assert await users.get(user_id=7) is None
         assert len(handler.calls) == 2
 
-    async def test_new_day_upserts_again(
-        self, sync: UserSyncMiddleware, repo: MagicMock, handler: _HandlerSpy, today: _FakeToday
+    async def test_new_day_saves_again(
+        self, sync: UserSyncMiddleware, users: UserRepo, handler: _HandlerSpy, today: _FakeToday
     ) -> None:
         """
-        On a new UTC day the user is upserted once more, with the new date.
+        On a new UTC day the user is saved once more: last_seen_on moves, registered_on stays.
 
         :param sync: The UserSyncMiddleware fixture.
-        :param repo: The mock UserRepo class.
+        :param users: The repository to check the table.
         :param handler: The handler spy fixture.
         :param today: The fake clock.
         :return: None
         """
         await sync(handler=handler, event=_EVENT, data=_tg_user())
         today.today = _DAY_2
-        await sync(handler=handler, event=_EVENT, data=_tg_user())
-        assert repo.return_value.upsert.await_count == 2
-        assert repo.return_value.upsert.await_args.kwargs["user"].last_seen_on == _DAY_2
+        await sync(handler=handler, event=_EVENT, data=_tg_user(first_name="Anna"))
+        user: TgUser | None = await users.get(user_id=7)
+        assert user is not None
+        assert (user.first_name, user.registered_on, user.last_seen_on) == ("Anna", _DAY_1, _DAY_2)
 
     @pytest.mark.parametrize(("language_code", "locale"), [("pt-br", "pt"), ("en", "en"), (None, None), ("", None)])
     async def test_locale_is_cut_to_two_characters(
         self,
         sync: UserSyncMiddleware,
-        repo: MagicMock,
+        users: UserRepo,
         handler: _HandlerSpy,
         language_code: str | None,
         locale: str | None,
@@ -481,88 +485,113 @@ class TestUserSync:
         The language code is cut to its first two characters; a missing or empty one is stored as NULL.
 
         :param sync: The UserSyncMiddleware fixture.
-        :param repo: The mock UserRepo class.
+        :param users: The repository to check the table.
         :param handler: The handler spy fixture.
         :param language_code: The language code Telegram reports.
         :param locale: The locale expected in the database.
         :return: None
         """
         await sync(handler=handler, event=_EVENT, data=_tg_user(language_code=language_code))
-        assert repo.return_value.upsert.await_args.kwargs["user"].locale == locale
+        user: TgUser | None = await users.get(user_id=7)
+        assert user is not None
+        assert user.locale == locale
 
     async def test_text_fields_are_cut_to_column_sizes(
-        self, sync: UserSyncMiddleware, repo: MagicMock, handler: _HandlerSpy
+        self, sync: UserSyncMiddleware, users: UserRepo, handler: _HandlerSpy
     ) -> None:
         """
-        Username, first and last name longer than their columns are cut to 32, 64 and 64 characters.
+        Username, first and last name longer than their columns are cut to 32, 64 and 64 characters and saved.
 
         :param sync: The UserSyncMiddleware fixture.
-        :param repo: The mock UserRepo class.
+        :param users: The repository to check the table.
         :param handler: The handler spy fixture.
         :return: None
         """
         data: dict[str, Any] = _tg_user(first_name="f" * 70, last_name="l" * 70, username="u" * 40)
         await sync(handler=handler, event=_EVENT, data=data)
-        user: TgUser = repo.return_value.upsert.await_args.kwargs["user"]
+        user: TgUser | None = await users.get(user_id=7)
+        assert user is not None
         assert (user.first_name, user.last_name, user.username) == ("f" * 64, "l" * 64, "u" * 32)
 
     async def test_missing_optional_fields_are_null(
-        self, sync: UserSyncMiddleware, repo: MagicMock, handler: _HandlerSpy
+        self, sync: UserSyncMiddleware, users: UserRepo, handler: _HandlerSpy
     ) -> None:
         """
         A user without a last name or a username is stored with NULL in those columns.
 
         :param sync: The UserSyncMiddleware fixture.
-        :param repo: The mock UserRepo class.
+        :param users: The repository to check the table.
         :param handler: The handler spy fixture.
         :return: None
         """
         await sync(handler=handler, event=_EVENT, data=_tg_user(last_name=None, username=None))
-        user: TgUser = repo.return_value.upsert.await_args.kwargs["user"]
+        user: TgUser | None = await users.get(user_id=7)
+        assert user is not None
         assert (user.last_name, user.username) == (None, None)
 
     @pytest.mark.parametrize(
         "data",
         [
             {},
-            {"event_from_user": User(id=8, is_bot=True, first_name="Bot"), "event_chat": _PRIVATE_CHAT},
+            {"event_from_user": User(id=7, is_bot=True, first_name="Bot"), "event_chat": _PRIVATE_CHAT},
             {"event_from_user": User(id=7, is_bot=False, first_name="Ann")},
             {"event_from_user": User(id=7, is_bot=False, first_name="Ann"), "event_chat": Chat(id=-1, type="group")},
         ],
         ids=["no user", "bot", "no chat", "group chat"],
     )
     async def test_skips_the_database(
-        self, sync: UserSyncMiddleware, repo: MagicMock, handler: _HandlerSpy, data: dict[str, Any]
+        self, sync: UserSyncMiddleware, users: UserRepo, handler: _HandlerSpy, data: dict[str, Any]
     ) -> None:
         """
         Updates without a user or chat, from a bot or a non-private chat skip the database write.
 
         :param sync: The UserSyncMiddleware fixture.
-        :param repo: The mock UserRepo class.
+        :param users: The repository to check the table.
         :param handler: The handler spy fixture.
         :param data: The data dict of the update.
         :return: None
         """
         assert await sync(handler=handler, event=_EVENT, data=data) == "handled"
-        repo.return_value.upsert.assert_not_awaited()
+        assert await users.get(user_id=7) is None
 
     async def test_database_error_is_logged_and_retried(
-        self, sync: UserSyncMiddleware, repo: MagicMock, handler: _HandlerSpy
+        self, sync: UserSyncMiddleware, users: UserRepo, handler: _HandlerSpy
     ) -> None:
         """
         A database error is logged, the handler still runs, and the next update retries the upsert.
 
+        The error is simulated: the first upsert raises, the second one goes to the test database.
+
         :param sync: The UserSyncMiddleware fixture.
-        :param repo: The mock UserRepo class.
+        :param users: The repository to check the table.
         :param handler: The handler spy fixture.
         :return: None
         """
-        repo.return_value.upsert.side_effect = [PostgresError("down"), None]
-        with patch.object(target=middlewares, attribute="logger") as mock_logger:
+        real_upsert: Callable[..., Awaitable[None]] = UserRepo.upsert
+        calls: list[int] = []
+
+        async def failing_once(self: UserRepo, *, user: TgUser) -> None:
+            """
+            Raises on the first call, then saves the user for real.
+
+            :param self: The repository.
+            :param user: The user to save.
+            :return: None
+            """
+            calls.append(user.id)
+            if len(calls) == 1:
+                raise PostgresError("down")
+            await real_upsert(self, user=user)
+
+        with (
+            patch.object(target=UserRepo, attribute="upsert", new=failing_once),
+            patch.object(target=middlewares, attribute="logger") as mock_logger,
+        ):
             assert await sync(handler=handler, event=_EVENT, data=_tg_user()) == "handled"
             mock_logger.error.assert_called_once()
-        await sync(handler=handler, event=_EVENT, data=_tg_user())
-        assert repo.return_value.upsert.await_count == 2
+            assert await users.get(user_id=7) is None
+            await sync(handler=handler, event=_EVENT, data=_tg_user())
+        assert await users.get(user_id=7) is not None
         assert len(handler.calls) == 2
 
 

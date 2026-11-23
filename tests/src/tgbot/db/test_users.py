@@ -1,12 +1,13 @@
-"""Unit tests for src/tgbot/db/users.py (UserRepo)."""
+"""Tests of src/tgbot/db/users.py (UserRepo) against the test PostgreSQL."""
 
-# ruff: noqa: PLR2004, S101
+# ruff: noqa: S101
 
 from datetime import date
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tgbot.db.pg_client import PostgresClient
+from tgbot.db.schema import Schema
 from tgbot.db.users import UserRepo
 from tgbot.misc.data_types import TgUser
 
@@ -19,70 +20,97 @@ _USER: TgUser = TgUser(
     last_name=None,
     locale="en",
     registered_on=date(year=2026, month=1, day=1),
-    last_seen_on=date(year=2026, month=1, day=2),
+    last_seen_on=date(year=2026, month=1, day=1),
 )
 
 
-@pytest.fixture(name="db")
-def db_fixture() -> MagicMock:
+@pytest.fixture(name="repo")
+async def repo_fixture(pg_client: PostgresClient) -> UserRepo:
     """
-    A mock pool or connection with awaitable query methods.
+    A UserRepo over the test PostgreSQL with an empty users table.
 
-    :return: The mock executor.
+    :param pg_client: The test client.
+    :return: The repository.
     """
-    db: MagicMock = MagicMock()
-    db.execute = AsyncMock()
-    db.fetchrow = AsyncMock()
-    return db
+    await Schema(client=pg_client).create()
+    return UserRepo(db=pg_client.pool)
 
 
-async def test_upsert(db: MagicMock) -> None:
+async def test_upsert_new_user(repo: UserRepo) -> None:
     """
-    upsert() inserts the user, and on a known ID updates everything but registered_on.
+    upsert() creates the row of a new user.
 
-    :param db: The mock executor.
+    :param repo: The repository.
     :return: None
     """
-    await UserRepo(db=db).upsert(user=_USER)
-    db.execute.assert_awaited_once()
-    query: str = db.execute.await_args.args[0]
-    assert "INSERT INTO users" in query
-    assert "ON CONFLICT (id) DO UPDATE" in query
-    assert "registered_on = " not in query
-    assert db.execute.await_args.args[1:] == tuple(_USER)
+    await repo.upsert(user=_USER)
+    assert await repo.get(user_id=42) == _USER
 
 
-async def test_get_found(db: MagicMock) -> None:
+async def test_upsert_known_user(repo: UserRepo) -> None:
     """
-    get() converts the row into a TgUser.
+    upsert() of a known user refreshes the profile and last_seen_on but keeps registered_on.
 
-    :param db: The mock executor.
+    :param repo: The repository.
     :return: None
     """
-    record: MagicMock = MagicMock()
-    record.__getitem__.side_effect = _USER._asdict().__getitem__
-    db.fetchrow.return_value = record
-    assert await UserRepo(db=db).get(user_id=42) == _USER
-    assert db.fetchrow.await_args.args[1] == 42
+    await repo.upsert(user=_USER)
+    later: TgUser = _USER._replace(
+        username=None,
+        first_name="Anna",
+        last_name="Lee",
+        locale="ru",
+        registered_on=date(year=2026, month=3, day=1),
+        last_seen_on=date(year=2026, month=3, day=1),
+    )
+    await repo.upsert(user=later)
+    assert await repo.get(user_id=42) == later._replace(registered_on=_USER.registered_on)
 
 
-async def test_get_missing(db: MagicMock) -> None:
+async def test_get_missing(repo: UserRepo) -> None:
     """
     get() returns None for an unknown user.
 
-    :param db: The mock executor.
+    :param repo: The repository.
     :return: None
     """
-    db.fetchrow.return_value = None
-    assert await UserRepo(db=db).get(user_id=42) is None
+    assert await repo.get(user_id=42) is None
 
 
-async def test_delete(db: MagicMock) -> None:
+async def test_delete(repo: UserRepo) -> None:
     """
-    delete() deletes the user by ID.
+    delete() removes the user; deleting an unknown user does nothing.
 
-    :param db: The mock executor.
+    :param repo: The repository.
     :return: None
     """
-    await UserRepo(db=db).delete(user_id=42)
-    db.execute.assert_awaited_once_with("DELETE FROM users WHERE id = $1", 42)
+    await repo.upsert(user=_USER)
+    await repo.delete(user_id=42)
+    await repo.delete(user_id=42)
+    assert await repo.get(user_id=42) is None
+
+
+async def _upsert_then_fail(*, pg_client: PostgresClient) -> None:
+    """
+    Saves the user through a repository over a transaction connection, then fails inside the transaction.
+
+    :param pg_client: The test client.
+    :return: None
+    :raises RuntimeError: always, from inside the transaction.
+    """
+    async with pg_client.transaction() as conn:
+        await UserRepo(db=conn).upsert(user=_USER)
+        raise RuntimeError("rollback")
+
+
+async def test_works_inside_a_transaction(pg_client: PostgresClient, repo: UserRepo) -> None:
+    """
+    A repository over a transaction connection: a failed transaction leaves nothing behind.
+
+    :param pg_client: The test client.
+    :param repo: The repository over the pool, to check the result.
+    :return: None
+    """
+    with pytest.raises(expected_exception=RuntimeError, match="rollback"):
+        await _upsert_then_fail(pg_client=pg_client)
+    assert await repo.get(user_id=42) is None

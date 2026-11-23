@@ -1,12 +1,10 @@
-"""Unit tests for src/tgbot/storage/redis_client.py."""
+"""Tests of src/tgbot/storage/redis_client.py against the test Redis."""
 
 # ruff: noqa: S101
 
-from collections.abc import AsyncIterator
-from unittest.mock import MagicMock
-
 import pytest
 from pydantic import SecretStr
+from redis.asyncio import Redis
 
 from tgbot.misc.data_types import RedisCredentials
 from tgbot.storage.redis_client import RedisClient, RedisValue
@@ -14,25 +12,24 @@ from tgbot.storage.redis_client import RedisClient, RedisValue
 __all__: tuple[str, ...] = ()
 
 
-def test_tcp() -> None:
+async def test_tcp_round_trip(redis: Redis) -> None:
     """
-    With a host and a port the client connects over TCP, with the password revealed.
+    The client connects to the test Redis over TCP and returns the values as str.
 
+    :param redis: The test Redis client.
     :return: None
     """
-    credentials: RedisCredentials = RedisCredentials.model_validate(
-        {"host": "localhost", "port": 6379, "db": 1, "user": "user", "password": "pass"}
-    )
-    kwargs: dict[str, object] = RedisClient(credentials=credentials).redis.connection_pool.connection_kwargs
-    assert (kwargs["host"], kwargs["port"], kwargs["db"]) == ("localhost", 6379, 1)
-    assert (kwargs["username"], kwargs["password"]) == ("user", "pass")
-    assert kwargs["decode_responses"] is True
-    assert "path" not in kwargs
+    await redis.set(name="key", value="value")
+    value: bytes | str | None = await redis.get(name="key")
+    assert value == "value"
+    assert isinstance(value, str)
 
 
 def test_socket() -> None:
     """
     With a socket path the client connects over the Unix socket.
+
+    No socket is reachable from the tests, so only the connection parameters are checked.
 
     :return: None
     """
@@ -41,6 +38,7 @@ def test_socket() -> None:
     )
     kwargs: dict[str, object] = RedisClient(credentials=credentials).redis.connection_pool.connection_kwargs
     assert kwargs["path"] == str(credentials.socket_path)
+    assert (kwargs["username"], kwargs["password"]) == ("user", "pass")
     assert kwargs["decode_responses"] is True
     assert "host" not in kwargs
 
@@ -56,15 +54,16 @@ def test_no_address() -> None:
         RedisClient(credentials=credentials)
 
 
-@pytest.mark.parametrize("value", ["text", None])
-def test_value_text(value: str | None) -> None:
+async def test_value_text(redis: Redis) -> None:
     """
-    A str value, or None for a missing key, is returned as is.
+    A value read from Redis is returned as str, a missing key as None.
 
-    :param value: The value Redis returned.
+    :param redis: The test Redis client.
     :return: None
     """
-    assert RedisValue.text(value=value) == value
+    await redis.set(name="key", value="value")
+    assert RedisValue.text(value=await redis.get(name="key")) == "value"
+    assert RedisValue.text(value=await redis.get(name="missing")) is None
 
 
 def test_value_bytes() -> None:
@@ -77,24 +76,14 @@ def test_value_bytes() -> None:
         RedisValue.text(value=b"text")
 
 
-async def test_scan_keys() -> None:
+async def test_scan_keys(redis: Redis) -> None:
     """
-    scan_keys() reads the matching keys with SCAN and returns them as str.
+    scan_keys() returns the keys matching the pattern, and only them.
 
+    :param redis: The test Redis client.
     :return: None
     """
-
-    async def scan(match: str) -> AsyncIterator[str]:
-        """
-        Stands in for Redis.scan_iter.
-
-        :param match: The pattern passed by scan_keys.
-        :return: An iterator over two keys.
-        """
-        assert match == "signal:*"
-        for key in ("signal:BTC", "signal:ETH"):
-            yield key
-
-    redis: MagicMock = MagicMock()
-    redis.scan_iter = scan
-    assert await RedisValue.scan_keys(redis=redis, pattern="signal:*") == ["signal:BTC", "signal:ETH"]
+    for key in ("signal:BTC", "signal:ETH", "other:BTC"):
+        await redis.set(name=key, value="1")
+    assert sorted(await RedisValue.scan_keys(redis=redis, pattern="signal:*")) == ["signal:BTC", "signal:ETH"]
+    assert await RedisValue.scan_keys(redis=redis, pattern="none:*") == []

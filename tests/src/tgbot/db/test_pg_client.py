@@ -1,28 +1,23 @@
-"""Unit tests for src/tgbot/db/pg_client.py (PostgresClient and Row)."""
+"""Tests of src/tgbot/db/pg_client.py (PostgresClient and Row) against the test PostgreSQL."""
 
 # ruff: noqa: S101, S106, SLF001
 
 from collections.abc import Generator
 from datetime import date
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+from asyncpg import Pool, Record
 
+from tests.conftest import TEST_POSTGRES
 from tgbot.db.pg_client import PostgresClient, Row
 from tgbot.misc.data_types import PostgresCredentials
 
 __all__: tuple[str, ...] = ()
 
-_TCP: PostgresCredentials = PostgresCredentials.model_validate(
-    {"host": "localhost", "port": 5432, "database": "db", "user": "user", "password": "pass"}
-)
-_SOCKET: PostgresCredentials = PostgresCredentials.model_validate(
-    {"socket_path": "/run/postgresql/.s.PGSQL.5432", "database": "db", "user": "user", "password": "pass"}
-)
-
 
 class _AwaitablePool:
-    """Stands in for the asyncpg Pool create_pool returns: awaiting it opens it and gives the pool back."""
+    """Stands in for the asyncpg Pool create_pool returns: awaiting it gives the mock pool back."""
 
     def __init__(self, pool: MagicMock) -> None:
         """
@@ -49,73 +44,62 @@ class _AwaitablePool:
         return self._pool
 
 
-@pytest.fixture(name="pool")
-def pool_fixture() -> MagicMock:
+async def test_connect(pg_client: PostgresClient) -> None:
     """
-    A mock pool whose close() is awaitable.
+    connect() opens a pool that runs queries on the test database.
 
-    :return: The mock pool.
-    """
-    pool: MagicMock = MagicMock()
-    pool.close = AsyncMock()
-    return pool
-
-
-async def test_connect_over_tcp(pool: MagicMock) -> None:
-    """
-    connect() opens the pool with the host, port and the password revealed.
-
-    :param pool: The mock pool.
+    :param pg_client: The connected test client.
     :return: None
     """
-    client: PostgresClient = PostgresClient(credentials=_TCP)
-    with patch(target="tgbot.db.pg_client.create_pool", return_value=_AwaitablePool(pool=pool)) as mock_create:
-        await client.connect()
-    mock_create.assert_called_once_with(host="localhost", port=5432, database="db", user="user", password="pass")
-    assert client.pool is pool
+    row: Record | None = await pg_client.pool.fetchrow("SELECT current_database() AS db, current_user AS usr")
+    assert row is not None
+    assert Row(record=row).get(column="db", kind=str) == "test_db"
+    assert Row(record=row).get(column="usr", kind=str) == "test_user"
 
 
-async def test_connect_over_socket(pool: MagicMock) -> None:
+async def test_connect_twice_keeps_the_pool(pg_client: PostgresClient) -> None:
+    """
+    A second connect() keeps the open pool.
+
+    :param pg_client: The connected test client.
+    :return: None
+    """
+    pool: Pool[Record] = pg_client.pool
+    await pg_client.connect()
+    assert pg_client.pool is pool
+
+
+async def test_connect_over_socket() -> None:
     """
     connect() passes the socket path as the host, which is how asyncpg takes a Unix socket.
 
-    :param pool: The mock pool.
+    No socket is reachable from the tests, so create_pool is replaced.
+
     :return: None
     """
-    client: PostgresClient = PostgresClient(credentials=_SOCKET)
+    credentials: PostgresCredentials = PostgresCredentials.model_validate(
+        {"socket_path": "/run/postgresql/.s.PGSQL.5432", "database": "db", "user": "user", "password": "pass"}
+    )
+    pool: MagicMock = MagicMock()
     with patch(target="tgbot.db.pg_client.create_pool", return_value=_AwaitablePool(pool=pool)) as mock_create:
-        await client.connect()
-    assert mock_create.call_args.kwargs["host"] == str(_SOCKET.socket_path)
-    assert mock_create.call_args.kwargs["port"] is None
+        await PostgresClient(credentials=credentials).connect()
+    mock_create.assert_called_once_with(
+        host=str(credentials.socket_path), port=None, database="db", user="user", password="pass"
+    )
 
 
-async def test_connect_twice_keeps_the_pool(pool: MagicMock) -> None:
-    """
-    A second connect() does not open another pool.
-
-    :param pool: The mock pool.
-    :return: None
-    """
-    client: PostgresClient = PostgresClient(credentials=_TCP)
-    with patch(target="tgbot.db.pg_client.create_pool", return_value=_AwaitablePool(pool=pool)) as mock_create:
-        await client.connect()
-        await client.connect()
-    mock_create.assert_called_once()
-
-
-async def test_close(pool: MagicMock) -> None:
+async def test_close() -> None:
     """
     close() closes the pool and forgets it; a second close() does nothing.
 
-    :param pool: The mock pool.
     :return: None
     """
-    client: PostgresClient = PostgresClient(credentials=_TCP)
-    with patch(target="tgbot.db.pg_client.create_pool", return_value=_AwaitablePool(pool=pool)):
-        await client.connect()
+    client: PostgresClient = PostgresClient(credentials=TEST_POSTGRES)
+    await client.connect()
+    pool: Pool[Record] = client.pool
     await client.close()
     await client.close()
-    pool.close.assert_awaited_once_with()
+    assert pool.is_closing()
     assert client._pool is None
 
 
@@ -126,77 +110,99 @@ def test_pool_before_connect() -> None:
     :return: None
     """
     with pytest.raises(expected_exception=RuntimeError, match="not connected"):
-        _ = PostgresClient(credentials=_TCP).pool
+        _ = PostgresClient(credentials=TEST_POSTGRES).pool
 
 
-async def test_transaction(pool: MagicMock) -> None:
+async def test_transaction_commits(pg_client: PostgresClient) -> None:
     """
-    transaction() yields a connection from the pool inside its transaction.
+    The queries of a transaction block are committed on exit.
 
-    :param pool: The mock pool.
+    :param pg_client: The connected test client.
     :return: None
     """
-    conn: MagicMock = MagicMock()
-    pool.acquire.return_value.__aenter__.return_value = conn
-    client: PostgresClient = PostgresClient(credentials=_TCP)
-    with patch(target="tgbot.db.pg_client.create_pool", return_value=_AwaitablePool(pool=pool)):
-        await client.connect()
-    async with client.transaction() as tx_conn:
-        assert tx_conn is conn
-        conn.transaction.return_value.__aenter__.assert_awaited_once()
-    conn.transaction.return_value.__aexit__.assert_awaited_once()
-    pool.acquire.return_value.__aexit__.assert_awaited_once()
+    await pg_client.pool.execute("CREATE TABLE users (id BIGINT PRIMARY KEY)")
+    async with pg_client.transaction() as conn:
+        assert conn.is_in_transaction()
+        await conn.execute("INSERT INTO users (id) VALUES (1)")
+        await conn.execute("INSERT INTO users (id) VALUES (2)")
+    row: Record | None = await pg_client.pool.fetchrow("SELECT count(*) AS n FROM users")
+    assert row is not None
+    assert Row(record=row).get(column="n", kind=int) == 2  # noqa: PLR2004 - the two inserted rows
 
 
-def _record(values: dict[str, object]) -> MagicMock:
+async def _insert_then_fail(*, pg_client: PostgresClient) -> None:
     """
-    Builds a stand-in for an asyncpg Record with the given columns.
+    Inserts a row in a transaction, then fails inside it.
 
-    :param values: Column values by name.
-    :return: The mock record.
+    :param pg_client: The connected test client.
+    :return: None
+    :raises RuntimeError: always, from inside the transaction.
     """
-    record: MagicMock = MagicMock()
-    record.__getitem__.side_effect = values.__getitem__
+    async with pg_client.transaction() as conn:
+        await conn.execute("INSERT INTO users (id) VALUES (1)")
+        raise RuntimeError("rollback")
+
+
+async def test_transaction_rolls_back(pg_client: PostgresClient) -> None:
+    """
+    An exception in a transaction block rolls back all its queries.
+
+    :param pg_client: The connected test client.
+    :return: None
+    """
+    await pg_client.pool.execute("CREATE TABLE users (id BIGINT PRIMARY KEY)")
+    with pytest.raises(expected_exception=RuntimeError, match="rollback"):
+        await _insert_then_fail(pg_client=pg_client)
+    row: Record | None = await pg_client.pool.fetchrow("SELECT count(*) AS n FROM users")
+    assert row is not None
+    assert Row(record=row).get(column="n", kind=int) == 0
+
+
+async def _record(*, pg_client: PostgresClient) -> Record:
+    """
+    Reads a row with an int, a date, a text and a NULL column.
+
+    :param pg_client: The connected test client.
+    :return: The row.
+    """
+    record: Record | None = await pg_client.pool.fetchrow(
+        "SELECT 1::bigint AS id, DATE '2026-01-02' AS day, 'Ann'::text AS name, NULL::text AS last"
+    )
+    assert record is not None
     return record
 
 
-def test_row_get() -> None:
+async def test_row_get(pg_client: PostgresClient) -> None:
     """
-    get() returns a value of the expected type.
+    get() and get_optional() return values of the expected types, get_optional() None for NULL.
 
+    :param pg_client: The connected test client.
     :return: None
     """
-    row: Row = Row(record=_record(values={"id": 1, "day": date(year=2026, month=1, day=2)}))
+    row: Row = Row(record=await _record(pg_client=pg_client))
     assert row.get(column="id", kind=int) == 1
     assert row.get(column="day", kind=date) == date(year=2026, month=1, day=2)
-
-
-def test_row_get_null() -> None:
-    """
-    get() rejects NULL in a column expected to be NOT NULL.
-
-    :return: None
-    """
-    with pytest.raises(expected_exception=TypeError, match="Column id is NULL, expected int"):
-        Row(record=_record(values={"id": None})).get(column="id", kind=int)
-
-
-def test_row_get_optional() -> None:
-    """
-    get_optional() returns the value or None for NULL.
-
-    :return: None
-    """
-    row: Row = Row(record=_record(values={"name": "Ann", "last": None}))
     assert row.get_optional(column="name", kind=str) == "Ann"
     assert row.get_optional(column="last", kind=str) is None
 
 
-def test_row_wrong_type() -> None:
+async def test_row_get_null(pg_client: PostgresClient) -> None:
+    """
+    get() rejects NULL in a column expected to be NOT NULL.
+
+    :param pg_client: The connected test client.
+    :return: None
+    """
+    with pytest.raises(expected_exception=TypeError, match="Column last is NULL, expected str"):
+        Row(record=await _record(pg_client=pg_client)).get(column="last", kind=str)
+
+
+async def test_row_wrong_type(pg_client: PostgresClient) -> None:
     """
     A value of another type than expected is rejected.
 
+    :param pg_client: The connected test client.
     :return: None
     """
-    with pytest.raises(expected_exception=TypeError, match="Column id is str, expected int"):
-        Row(record=_record(values={"id": "1"})).get_optional(column="id", kind=int)
+    with pytest.raises(expected_exception=TypeError, match="Column name is str, expected int"):
+        Row(record=await _record(pg_client=pg_client)).get_optional(column="name", kind=int)
