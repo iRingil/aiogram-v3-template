@@ -1,4 +1,4 @@
-"""Unit tests for src/tgbot/db/client.py (PostgresClient and Row)."""
+"""Unit tests for src/tgbot/db/pg_client.py (PostgresClient and Row)."""
 
 # ruff: noqa: S101, S106, SLF001
 
@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tgbot.db.client import PostgresClient, Row
-from tgbot.misc.dataclasses import PostgresCredentials
+from tgbot.db.pg_client import PostgresClient, Row
+from tgbot.misc.data_types import PostgresCredentials
 
 __all__: tuple[str, ...] = ()
 
@@ -69,7 +69,7 @@ async def test_connect_over_tcp(pool: MagicMock) -> None:
     :return: None
     """
     client: PostgresClient = PostgresClient(credentials=_TCP)
-    with patch(target="tgbot.db.client.create_pool", return_value=_AwaitablePool(pool=pool)) as mock_create:
+    with patch(target="tgbot.db.pg_client.create_pool", return_value=_AwaitablePool(pool=pool)) as mock_create:
         await client.connect()
     mock_create.assert_called_once_with(host="localhost", port=5432, database="db", user="user", password="pass")
     assert client.pool is pool
@@ -83,7 +83,7 @@ async def test_connect_over_socket(pool: MagicMock) -> None:
     :return: None
     """
     client: PostgresClient = PostgresClient(credentials=_SOCKET)
-    with patch(target="tgbot.db.client.create_pool", return_value=_AwaitablePool(pool=pool)) as mock_create:
+    with patch(target="tgbot.db.pg_client.create_pool", return_value=_AwaitablePool(pool=pool)) as mock_create:
         await client.connect()
     assert mock_create.call_args.kwargs["host"] == str(_SOCKET.socket_path)
     assert mock_create.call_args.kwargs["port"] is None
@@ -97,7 +97,7 @@ async def test_connect_twice_keeps_the_pool(pool: MagicMock) -> None:
     :return: None
     """
     client: PostgresClient = PostgresClient(credentials=_TCP)
-    with patch(target="tgbot.db.client.create_pool", return_value=_AwaitablePool(pool=pool)) as mock_create:
+    with patch(target="tgbot.db.pg_client.create_pool", return_value=_AwaitablePool(pool=pool)) as mock_create:
         await client.connect()
         await client.connect()
     mock_create.assert_called_once()
@@ -111,7 +111,7 @@ async def test_close(pool: MagicMock) -> None:
     :return: None
     """
     client: PostgresClient = PostgresClient(credentials=_TCP)
-    with patch(target="tgbot.db.client.create_pool", return_value=_AwaitablePool(pool=pool)):
+    with patch(target="tgbot.db.pg_client.create_pool", return_value=_AwaitablePool(pool=pool)):
         await client.connect()
     await client.close()
     await client.close()
@@ -139,7 +139,7 @@ async def test_transaction(pool: MagicMock) -> None:
     conn: MagicMock = MagicMock()
     pool.acquire.return_value.__aenter__.return_value = conn
     client: PostgresClient = PostgresClient(credentials=_TCP)
-    with patch(target="tgbot.db.client.create_pool", return_value=_AwaitablePool(pool=pool)):
+    with patch(target="tgbot.db.pg_client.create_pool", return_value=_AwaitablePool(pool=pool)):
         await client.connect()
     async with client.transaction() as tx_conn:
         assert tx_conn is conn

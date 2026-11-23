@@ -17,7 +17,7 @@ from babel.messages.mofile import write_mo
 from babel.support import NullTranslations, Translations
 from jinja2 import TemplateNotFound
 
-from tgbot.misc.dataclasses import Paths
+from tgbot.misc.data_types import Paths
 from tgbot.misc.tmpl_render import TmplRender
 
 if TYPE_CHECKING:

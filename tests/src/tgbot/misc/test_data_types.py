@@ -1,4 +1,4 @@
-"""Unit tests for src/tgbot/misc/dataclasses.py (validation of the credentials models)."""
+"""Unit tests for src/tgbot/misc/data_types.py (validation of the credentials models)."""
 
 # ruff: noqa: S101
 
@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from tgbot.misc.dataclasses import PostgresCredentials, RedisCredentials, WebhookCredentials
+from tgbot.misc.data_types import PostgresCredentials, RedisCredentials, WebhookCredentials
 
 __all__: tuple[str, ...] = ()
 

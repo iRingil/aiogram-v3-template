@@ -7,7 +7,7 @@ from environs import Env, EnvError
 from loguru import logger
 from pydantic import PositiveInt, SecretStr, TypeAdapter, ValidationError
 
-from tgbot.misc.dataclasses import Paths, PostgresCredentials, RedisCredentials, WebhookCredentials
+from tgbot.misc.data_types import Paths, PostgresCredentials, RedisCredentials, WebhookCredentials
 
 __all__: tuple[str, ...] = ("Config", "logger")
 

@@ -4,8 +4,8 @@ from datetime import date
 
 from asyncpg import Record
 
-from tgbot.db.client import Executor, Row
-from tgbot.misc.dataclasses import TgUser
+from tgbot.db.pg_client import Executor, Row
+from tgbot.misc.data_types import TgUser
 
 __all__: tuple[str, ...] = ("UserRepo",)
 

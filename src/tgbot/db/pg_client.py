@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 from asyncpg import Pool, Record, create_pool
 from asyncpg.pool import PoolConnectionProxy
 
-from tgbot.misc.dataclasses import PostgresCredentials
+from tgbot.misc.data_types import PostgresCredentials
 
 if TYPE_CHECKING:
     from pathlib import Path

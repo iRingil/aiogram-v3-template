@@ -14,7 +14,7 @@ from aiohttp.web import run_app
 from aiohttp.web_app import Application
 
 from tgbot.config import Config, logger
-from tgbot.db.client import PostgresClient
+from tgbot.db.pg_client import PostgresClient
 from tgbot.db.schema import Schema
 from tgbot.handlers.main import MainHandler
 from tgbot.misc.bot_commands import BotCommands
@@ -27,7 +27,7 @@ from tgbot.misc.tmpl_render import TmplRender
 from tgbot.storage.redis_client import RedisClient
 
 if TYPE_CHECKING:
-    from tgbot.misc.dataclasses import RedisCredentials
+    from tgbot.misc.data_types import RedisCredentials
 
 __all__: tuple[str, ...] = ()
 

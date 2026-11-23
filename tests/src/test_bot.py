@@ -16,9 +16,9 @@ from pydantic import SecretStr
 from bot import TgBot, main
 from tests.helpers import mocked
 from tgbot.config import Config
-from tgbot.db.client import PostgresClient
+from tgbot.db.pg_client import PostgresClient
 from tgbot.misc.broadcaster import Broadcaster
-from tgbot.misc.dataclasses import PostgresCredentials, RedisCredentials, WebhookCredentials
+from tgbot.misc.data_types import PostgresCredentials, RedisCredentials, WebhookCredentials
 from tgbot.misc.keyboards import KeyboardManager
 from tgbot.misc.middlewares import AntiFloodMiddleware, UserSyncMiddleware
 from tgbot.misc.scheduler import Scheduler

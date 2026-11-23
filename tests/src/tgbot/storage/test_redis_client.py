@@ -5,7 +5,7 @@
 import pytest
 from pydantic import SecretStr
 
-from tgbot.misc.dataclasses import RedisCredentials
+from tgbot.misc.data_types import RedisCredentials
 from tgbot.storage.redis_client import RedisClient
 
 __all__: tuple[str, ...] = ()

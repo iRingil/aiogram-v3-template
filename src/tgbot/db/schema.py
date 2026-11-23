@@ -1,6 +1,6 @@
 """Creates the database tables that don't exist yet."""
 
-from tgbot.db.client import PostgresClient
+from tgbot.db.pg_client import PostgresClient
 
 __all__: tuple[str, ...] = ("Schema",)
 

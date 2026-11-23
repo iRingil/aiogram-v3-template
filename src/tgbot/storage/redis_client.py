@@ -2,7 +2,7 @@
 
 from redis.asyncio import Redis
 
-from tgbot.misc.dataclasses import RedisCredentials
+from tgbot.misc.data_types import RedisCredentials
 
 __all__: tuple[str, ...] = ("RedisClient",)
 

@@ -11,7 +11,7 @@ import pytest
 from environs import EnvError
 
 from tgbot.config import Config
-from tgbot.misc.dataclasses import Paths, PostgresCredentials, RedisCredentials, WebhookCredentials
+from tgbot.misc.data_types import Paths, PostgresCredentials, RedisCredentials, WebhookCredentials
 
 __all__: tuple[str, ...] = ()
 

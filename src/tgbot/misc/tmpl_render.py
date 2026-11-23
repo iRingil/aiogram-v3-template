@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from babel.support import Translations
 from jinja2 import Environment, FileSystemLoader
 
-from tgbot.misc.dataclasses import Paths
+from tgbot.misc.data_types import Paths
 
 if TYPE_CHECKING:
     from gettext import NullTranslations

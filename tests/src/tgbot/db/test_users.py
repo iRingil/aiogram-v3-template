@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from tgbot.db.users import UserRepo
-from tgbot.misc.dataclasses import TgUser
+from tgbot.misc.data_types import TgUser
 
 __all__: tuple[str, ...] = ()
 

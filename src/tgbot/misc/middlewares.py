@@ -11,9 +11,9 @@ from aiogram.types import TelegramObject, User
 from asyncpg import InterfaceError, PostgresError
 
 from tgbot.config import logger
-from tgbot.db.client import PostgresClient
+from tgbot.db.pg_client import PostgresClient
 from tgbot.db.users import UserRepo
-from tgbot.misc.dataclasses import TgUser
+from tgbot.misc.data_types import TgUser
 
 __all__: tuple[str, ...] = ("AntiFloodMiddleware", "UserSyncMiddleware")
 

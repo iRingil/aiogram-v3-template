@@ -19,7 +19,7 @@ from aiogram.types import TelegramObject, User
 from asyncpg import PostgresError
 
 from tgbot.misc import middlewares
-from tgbot.misc.dataclasses import TgUser
+from tgbot.misc.data_types import TgUser
 from tgbot.misc.middlewares import AntiFloodMiddleware, UserSyncMiddleware
 
 __all__: tuple[str, ...] = ()
