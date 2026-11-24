@@ -241,5 +241,5 @@ cython_debug/
 /src/tgbot/temp/
 /src/logs/
 
-# AI
-.claude
+# Claude Code: personal settings
+.claude/settings.local.json
