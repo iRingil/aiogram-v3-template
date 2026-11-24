@@ -27,8 +27,10 @@ class TmplRender:
 
         :param paths: Paths object.
         """
-        # Telegram HTML: user values are escaped explicitly with |e in the templates
-        self._env: Environment = Environment(  # noqa: S701
+        # Telegram HTML: every value passed to a template is escaped (a user's name "<3" would otherwise be taken
+        # for a tag and Telegram would reject the message); the markup of the templates and translations is kept
+        self._env: Environment = Environment(
+            autoescape=True,
             trim_blocks=True,
             lstrip_blocks=True,
             extensions=["jinja2.ext.i18n"],

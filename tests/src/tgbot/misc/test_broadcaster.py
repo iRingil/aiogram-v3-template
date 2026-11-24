@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, create_autospec
 import pytest
 from aiogram import Bot
 from aiogram.enums import ChatAction
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from aiogram.methods import SendMessage
 from aiogram.types import BufferedInputFile, InlineKeyboardMarkup
 
@@ -31,6 +31,16 @@ def _api_error() -> TelegramAPIError:
     :return: A TelegramAPIError instance.
     """
     return TelegramAPIError(method=SendMessage(chat_id=1, text="x"), message="bad")
+
+
+def _retry_after(seconds: int) -> TelegramRetryAfter:
+    """
+    Builds a real TelegramRetryAfter (a flood limit), backed by a throwaway SendMessage method.
+
+    :param seconds: The time Telegram asks to wait.
+    :return: A TelegramRetryAfter instance.
+    """
+    return TelegramRetryAfter(method=SendMessage(chat_id=1, text="x"), message="flood", retry_after=seconds)
 
 
 @pytest.fixture(autouse=True)
@@ -220,6 +230,42 @@ async def test_send_rate_limit(broadcaster: Broadcaster, bot: MagicMock, sleep_c
     assert sleep_calls == [1.0 / Broadcaster._max_msgs_per_sec]
 
 
+async def test_send_retries_after_flood_limit(
+    broadcaster: Broadcaster, bot: MagicMock, sleep_calls: list[float]
+) -> None:
+    """
+    Test that a flood limit is waited out for the time Telegram asks, and the same message is sent again.
+
+    :param broadcaster: The Broadcaster fixture.
+    :param bot: The mocked Bot fixture.
+    :param sleep_calls: Fixture recording every requested delay.
+    :return: None
+    """
+    bot.send_message.side_effect = [_retry_after(seconds=7), MagicMock(message_id=5)]
+    assert await broadcaster.send_content(user_id=42, msg="hi") == 5
+    assert [call.kwargs["chat_id"] for call in bot.send_message.await_args_list] == [42, 42]
+    assert sleep_calls == [7, 1.0 / Broadcaster._max_msgs_per_sec]
+
+
+async def test_send_gives_up_after_the_last_attempt(
+    broadcaster: Broadcaster, bot: MagicMock, sleep_calls: list[float]
+) -> None:
+    """
+    Test that a flood limit on every attempt is raised after the last one, without a wait after it.
+
+    :param broadcaster: The Broadcaster fixture.
+    :param bot: The mocked Bot fixture.
+    :param sleep_calls: Fixture recording every requested delay.
+    :return: None
+    """
+    attempts: int = Broadcaster._max_attempts
+    bot.send_message.side_effect = [_retry_after(seconds=3) for _ in range(attempts)]
+    with pytest.raises(expected_exception=TelegramRetryAfter):
+        await broadcaster.send_content(user_id=42, msg="hi")
+    assert bot.send_message.await_count == attempts
+    assert sleep_calls == [3] * (attempts - 1)
+
+
 async def test_send_concurrent(broadcaster: Broadcaster, bot: MagicMock, sleep_calls: list[float]) -> None:
     """
     Test that concurrent calls are serialized by the lock and each gets its own message ID.
@@ -280,12 +326,13 @@ async def test_broadcast_telegram_error(broadcaster: Broadcaster, bot: MagicMock
 
 async def test_broadcast_other_error(broadcaster: Broadcaster, bot: MagicMock) -> None:
     """
-    Test that any other exception stops the broadcast and is swallowed by handle_exc.
+    Test that any other exception stops the broadcast and goes to the caller.
 
     :param broadcaster: The Broadcaster fixture.
     :param bot: The mocked Bot fixture.
     :return: None
     """
     bot.send_message.side_effect = [MagicMock(message_id=1), RuntimeError("boom"), MagicMock(message_id=3)]
-    await broadcaster.broadcast(users_ids=[1, 2, 3], msg="hi")
+    with pytest.raises(expected_exception=RuntimeError, match="boom"):
+        await broadcaster.broadcast(users_ids=[1, 2, 3], msg="hi")
     assert bot.send_message.await_count == 2

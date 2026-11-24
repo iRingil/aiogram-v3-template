@@ -1,21 +1,22 @@
 """
 Unit tests for src/tgbot/misc/middlewares.py (AntiFloodMiddleware and UserSyncMiddleware).
 
-The middleware's only real dependency is time.monotonic - replaced here with _FakeClock, a
-controllable stand-in tests advance explicitly. The wrapped handler is a scripted async spy
-(_HandlerSpy) rather than a mock, since it has no real external dependency of its own either.
+AntiFloodMiddleware keeps its windows in the test Redis; its clock (middlewares.time) is replaced with _FakeClock,
+which tests advance explicitly. The wrapped handler is a scripted async spy (_HandlerSpy) rather than a mock.
 UserSyncMiddleware gets a fake UTC date and writes to the test PostgreSQL.
 """
 
 # ruff: noqa: PLR2004, S101, SLF001
 
+from asyncio import sleep
 from datetime import date
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiogram.types import Chat, TelegramObject, User
 from asyncpg import PostgresError
+from redis.asyncio import Redis
 
 from tgbot.db.pg_client import PostgresClient
 from tgbot.db.schema import Schema
@@ -34,9 +35,9 @@ _EVENT: TelegramObject = TelegramObject()
 
 
 class _FakeClock:
-    """A controllable stand-in for time.monotonic, advanced explicitly by tests."""
+    """A controllable stand-in for time.time, advanced explicitly by tests."""
 
-    def __init__(self, start: float = 0.0) -> None:
+    def __init__(self, start: float = 1_000_000.0) -> None:
         """
         Sets the initial fake time.
 
@@ -98,13 +99,13 @@ def _user_data(user_id: int | None) -> dict[str, Any]:
 @pytest.fixture(name="clock")
 def clock_fixture(monkeypatch: pytest.MonkeyPatch) -> _FakeClock:
     """
-    Replaces middlewares.monotonic with a controllable fake clock starting at 0.0.
+    Replaces middlewares.time with a controllable fake clock.
 
-    :param monkeypatch: pytest fixture used to patch middlewares.monotonic.
+    :param monkeypatch: pytest fixture used to patch middlewares.time.
     :return: The _FakeClock instance the middleware under test will read time from.
     """
     clock: _FakeClock = _FakeClock()
-    monkeypatch.setattr(target=middlewares, name="monotonic", value=clock)
+    monkeypatch.setattr(target=middlewares, name="time", value=clock)
     return clock
 
 
@@ -119,27 +120,28 @@ def handler_fixture() -> _HandlerSpy:
 
 
 @pytest.fixture(name="middleware")
-def middleware_fixture() -> AntiFloodMiddleware:
+def middleware_fixture(redis: Redis) -> AntiFloodMiddleware:
     """
-    A fresh AntiFloodMiddleware instance, with its own empty per-user hit history.
+    An AntiFloodMiddleware over the empty test Redis.
 
+    :param redis: The test Redis client.
     :return: The AntiFloodMiddleware instance under test.
     """
-    return AntiFloodMiddleware()
+    return AntiFloodMiddleware(redis=redis)
 
 
 class TestNoResolvableUser:
     """Tests the middleware's behavior when data has no "event_from_user" to key the rate limit by."""
 
-    @pytest.mark.usefixtures("clock")
     async def test_calls_the_handler_regardless_of_call_count(
-        self, middleware: AntiFloodMiddleware, handler: _HandlerSpy
+        self, middleware: AntiFloodMiddleware, handler: _HandlerSpy, redis: Redis
     ) -> None:
         """
-        Without a user to track, every call is let through unconditionally, even past the normal limit.
+        Without a user to track, every call is let through unconditionally and nothing is written to Redis.
 
         :param middleware: The AntiFloodMiddleware fixture.
         :param handler: The handler spy fixture.
+        :param redis: The test Redis client.
         :return: None
         """
         data: dict[str, Any] = _user_data(user_id=None)
@@ -147,6 +149,7 @@ class TestNoResolvableUser:
             result: Any = await middleware(handler=handler, event=_EVENT, data=data)
             assert result == "handled"
         assert len(handler.calls) == AntiFloodMiddleware._limit + 5
+        assert await redis.dbsize() == 0
 
 
 class TestWithinLimit:
@@ -223,13 +226,14 @@ class TestExceedsLimit:
         assert len(handler.calls) == limit
 
     async def test_dropped_calls_dont_count_towards_future_allowance(
-        self, middleware: AntiFloodMiddleware, handler: _HandlerSpy
+        self, middleware: AntiFloodMiddleware, handler: _HandlerSpy, redis: Redis
     ) -> None:
         """
-        Repeated calls past the limit stay dropped - a dropped call isn't itself recorded as a hit.
+        Repeated calls past the limit stay dropped - a dropped call isn't itself kept in the window.
 
         :param middleware: The AntiFloodMiddleware fixture.
         :param handler: The handler spy fixture.
+        :param redis: The test Redis client.
         :return: None
         """
         data: dict[str, Any] = _user_data(user_id=1)
@@ -240,16 +244,48 @@ class TestExceedsLimit:
             result: Any = await middleware(handler=handler, event=_EVENT, data=data)
             assert result is None
         assert len(handler.calls) == limit
+        assert await redis.zcard(name="tgbot_flood:1") == limit
+
+    async def test_window_is_shared_between_instances(self, redis: Redis, handler: _HandlerSpy) -> None:
+        """
+        Two middleware instances over the same Redis (two bot processes) count the same window.
+
+        :param redis: The test Redis client.
+        :param handler: The handler spy fixture.
+        :return: None
+        """
+        first: AntiFloodMiddleware = AntiFloodMiddleware(redis=redis)
+        second: AntiFloodMiddleware = AntiFloodMiddleware(redis=redis)
+        data: dict[str, Any] = _user_data(user_id=1)
+        for _ in range(AntiFloodMiddleware._limit):
+            await first(handler=handler, event=_EVENT, data=data)
+        assert await second(handler=handler, event=_EVENT, data=data) is None
+
+    async def test_zcard_of_another_type_is_an_error(self, handler: _HandlerSpy) -> None:
+        """
+        A ZCARD result that is not a number fails loudly instead of letting the update through.
+
+        :param handler: The handler spy fixture.
+        :return: None
+        """
+        pipe: MagicMock = MagicMock()
+        pipe.execute = AsyncMock(return_value=[0, 1, "1", True])
+        redis: MagicMock = MagicMock()
+        redis.pipeline.return_value.__aenter__ = AsyncMock(return_value=pipe)
+        redis.pipeline.return_value.__aexit__ = AsyncMock(return_value=None)
+        with pytest.raises(expected_exception=TypeError, match="Redis returned str for ZCARD"):
+            await AntiFloodMiddleware(redis=redis)(handler=handler, event=_EVENT, data=_user_data(user_id=1))
+        assert handler.calls == []
 
 
-class TestSlidingWindowExpiry:
-    """Tests that a throttled user is let through again once old hits age out of the window."""
+class TestWindowExpiry:
+    """Tests that a throttled user is let through again once old updates age out, and that Redis forgets them."""
 
     async def test_still_blocked_exactly_at_the_window_boundary(
         self, middleware: AntiFloodMiddleware, handler: _HandlerSpy, clock: _FakeClock
     ) -> None:
         """
-        The oldest hit is only dropped once it's strictly older than the window, not merely as old as it.
+        The oldest update is only dropped once it's strictly older than the window, not merely as old as it.
 
         :param middleware: The AntiFloodMiddleware fixture.
         :param handler: The handler spy fixture.
@@ -258,10 +294,9 @@ class TestSlidingWindowExpiry:
         """
         data: dict[str, Any] = _user_data(user_id=1)
         limit: int = AntiFloodMiddleware._limit
-        period: float = AntiFloodMiddleware._period
         for _ in range(limit):
             await middleware(handler=handler, event=_EVENT, data=data)
-        clock.advance(delta=period)
+        clock.advance(delta=AntiFloodMiddleware._period)
         result: Any = await middleware(handler=handler, event=_EVENT, data=data)
         assert result is None
         assert len(handler.calls) == limit
@@ -270,7 +305,7 @@ class TestSlidingWindowExpiry:
         self, middleware: AntiFloodMiddleware, handler: _HandlerSpy, clock: _FakeClock
     ) -> None:
         """
-        Once enough time passes for the oldest recorded hit to age out, a new call is let through again.
+        Once enough time passes for the oldest recorded update to age out, a new call is let through again.
 
         :param middleware: The AntiFloodMiddleware fixture.
         :param handler: The handler spy fixture.
@@ -279,10 +314,9 @@ class TestSlidingWindowExpiry:
         """
         data: dict[str, Any] = _user_data(user_id=1)
         limit: int = AntiFloodMiddleware._limit
-        period: float = AntiFloodMiddleware._period
         for _ in range(limit):
             await middleware(handler=handler, event=_EVENT, data=data)
-        clock.advance(delta=period + 0.001)
+        clock.advance(delta=AntiFloodMiddleware._period + 0.001)
         result: Any = await middleware(handler=handler, event=_EVENT, data=data)
         assert result == "handled"
         assert len(handler.calls) == limit + 1
@@ -291,28 +325,42 @@ class TestSlidingWindowExpiry:
         self, middleware: AntiFloodMiddleware, handler: _HandlerSpy, clock: _FakeClock
     ) -> None:
         """
-        The slot freed by one aged-out hit only lets a single new call through before throttling resumes.
+        The slot freed by one aged-out update only lets a single new call through before throttling resumes.
 
-        Hits are staggered by a tiny step so they age out one at a time, not all together.
+        Updates are staggered by a tiny step so they age out one at a time, not all together.
 
         :param middleware: The AntiFloodMiddleware fixture.
         :param handler: The handler spy fixture.
         :param clock: The fake clock fixture, advanced just past the point where only the very
-            first hit has aged out of the window.
+            first update has aged out of the window.
         :return: None
         """
         data: dict[str, Any] = _user_data(user_id=1)
         limit: int = AntiFloodMiddleware._limit
-        period: float = AntiFloodMiddleware._period
+        start: float = clock.now
         step: float = 0.01
         for i in range(limit):
-            clock.now = i * step
+            clock.now = start + i * step
             await middleware(handler=handler, event=_EVENT, data=data)
-        clock.now = period + step / 2  # only the hit at t=0 is older than the window now
+        clock.now = start + AntiFloodMiddleware._period + step / 2  # only the first update is older than the window
         await middleware(handler=handler, event=_EVENT, data=data)
         result: Any = await middleware(handler=handler, event=_EVENT, data=data)
         assert result is None
         assert len(handler.calls) == limit + 1
+
+    async def test_redis_expires_the_window(
+        self, middleware: AntiFloodMiddleware, handler: _HandlerSpy, redis: Redis
+    ) -> None:
+        """
+        The window key expires one window after the last update, so Redis removes a user who stopped writing.
+
+        :param middleware: The AntiFloodMiddleware fixture.
+        :param handler: The handler spy fixture.
+        :param redis: The test Redis client.
+        :return: None
+        """
+        await middleware(handler=handler, event=_EVENT, data=_user_data(user_id=1))
+        assert 0 < await redis.pttl(name="tgbot_flood:1") <= AntiFloodMiddleware._period * 1000
 
 
 # region UserSyncMiddleware
@@ -593,6 +641,40 @@ class TestUserSync:
             await sync(handler=handler, event=_EVENT, data=_tg_user())
         assert await users.get(user_id=7) is not None
         assert len(handler.calls) == 2
+
+    async def test_slow_database_is_given_up(
+        self, sync: UserSyncMiddleware, users: UserRepo, handler: _HandlerSpy, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """
+        An upsert slower than the time limit is given up and logged; the handler runs without waiting for it.
+
+        :param sync: The UserSyncMiddleware fixture.
+        :param users: The repository to check the table.
+        :param handler: The handler spy fixture.
+        :param monkeypatch: pytest fixture used to shorten the time limit.
+        :return: None
+        """
+
+        async def hanging(self: UserRepo, *, user: TgUser) -> None:
+            """
+            Stands in for an upsert on a database that doesn't answer.
+
+            :param self: The repository.
+            :param user: The user to save.
+            :return: None
+            """
+            del self, user
+            await sleep(delay=10)
+
+        monkeypatch.setattr(target=sync, name="_timeout", value=0.05)
+        with (
+            patch.object(target=UserRepo, attribute="upsert", new=hanging),
+            patch.object(target=middlewares, attribute="logger") as mock_logger,
+        ):
+            assert await sync(handler=handler, event=_EVENT, data=_tg_user()) == "handled"
+        mock_logger.error.assert_called_once()
+        assert "TimeoutError" in mock_logger.error.call_args.args[0]
+        assert await users.get(user_id=7) is None
 
 
 # endregion

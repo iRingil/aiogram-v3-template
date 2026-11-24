@@ -361,10 +361,10 @@ def test_bot_of_unbound_event(base_service: BaseService, message: Message) -> No
         base_service._bot_of(event=message)
 
 
-@pytest.mark.parametrize(("language_code", "expected"), [("ru", "ru"), (None, "en"), ("", "en")])
+@pytest.mark.parametrize(("language_code", "expected"), [("ru", "ru"), ("pt-br", "pt"), (None, "en"), ("", "en")])
 def test_locale(base_service: BaseService, language_code: str | None, expected: str) -> None:
     """
-    Test the _locale method: the language reported by Telegram, or the default locale.
+    Test the _locale method: the language reported by Telegram cut to two characters, or the default locale.
 
     :param base_service: Instance of BaseService.
     :param language_code: Language code reported by Telegram.

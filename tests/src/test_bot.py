@@ -88,6 +88,12 @@ def test_init(tg_bot: TgBot) -> None:
     # The user sync goes after the anti-flood middleware, so dropped updates don't reach the database
     middleware_types: list[type] = [type(middleware) for middleware in tg_bot._dp.update.outer_middleware]
     assert middleware_types.index(AntiFloodMiddleware) < middleware_types.index(UserSyncMiddleware)
+    # The anti-flood windows live in the same Redis as the FSM storage, which closes the client on shutdown
+    anti_flood: AntiFloodMiddleware = next(
+        middleware for middleware in tg_bot._dp.update.outer_middleware if isinstance(middleware, AntiFloodMiddleware)
+    )
+    assert isinstance(tg_bot._dp.storage, RedisStorage)
+    assert anti_flood._redis is tg_bot._dp.storage.redis
     assert tg_bot._bot.default == DefaultBotProperties(
         parse_mode="HTML", allow_sending_without_reply=True, link_preview_is_disabled=True
     )
@@ -102,7 +108,7 @@ async def test_on_startup_polling(tg_bot: TgBot) -> None:
     :param tg_bot: Instance of TgBot to test.
     :return: None
     """
-    tg_bot._broadcaster.broadcast = AsyncMock()
+    tg_bot._broadcaster.broadcast = AsyncMock()  # Nothing is sent to the admins
     tg_bot._scheduler.start = MagicMock()
     mock_bot_commands: MagicMock = MagicMock()
     mock_bot_commands.set_commands = AsyncMock()
@@ -117,9 +123,7 @@ async def test_on_startup_polling(tg_bot: TgBot) -> None:
     tg_bot._db.connect.assert_awaited_once_with()
     mock_schema.assert_called_once_with(client=tg_bot._db)
     mock_schema.return_value.create.assert_awaited_once_with()
-    tg_bot._broadcaster.broadcast.assert_called_once_with(
-        users_ids=tg_bot._config.admins, msg="Bot was started", notify=False
-    )
+    tg_bot._broadcaster.broadcast.assert_not_called()
     tg_bot._scheduler.start.assert_called_once_with()
     mock_bot_commands.set_commands.assert_called_once()
     mocked(tg_bot._bot.set_webhook).assert_not_called()
@@ -134,7 +138,7 @@ async def test_on_startup_webhook(tg_bot: TgBot) -> None:
     :param tg_bot: Instance of TgBot to test.
     :return: None
     """
-    tg_bot._broadcaster.broadcast = AsyncMock()
+    tg_bot._broadcaster.broadcast = AsyncMock()  # Nothing is sent to the admins
     tg_bot._scheduler.start = MagicMock()
     mock_bot_commands: MagicMock = MagicMock()
     mock_bot_commands.set_commands = AsyncMock()
@@ -146,9 +150,7 @@ async def test_on_startup_webhook(tg_bot: TgBot) -> None:
     ):
         mock_schema.return_value.create = AsyncMock()
         await tg_bot._on_startup()
-    tg_bot._broadcaster.broadcast.assert_called_once_with(
-        users_ids=tg_bot._config.admins, msg="Bot was started", notify=False
-    )
+    tg_bot._broadcaster.broadcast.assert_not_called()
     tg_bot._scheduler.start.assert_called_once_with()
     mock_bot_commands.set_commands.assert_called_once()
     mocked(tg_bot._bot.set_webhook).assert_called_once_with(
@@ -168,7 +170,7 @@ async def test_on_shutdown_polling(tg_bot: TgBot) -> None:
     :param tg_bot: Instance of TgBot to test.
     :return: None
     """
-    tg_bot._broadcaster.broadcast = AsyncMock()
+    tg_bot._broadcaster.broadcast = AsyncMock()  # Nothing is sent to the admins
     tg_bot._db.close = AsyncMock()
     mocked(tg_bot._config).webhook = None
     with (
@@ -177,9 +179,7 @@ async def test_on_shutdown_polling(tg_bot: TgBot) -> None:
     ):
         await tg_bot._on_shutdown()
     mock_shutdown.assert_called_once_with()
-    tg_bot._broadcaster.broadcast.assert_called_once_with(
-        users_ids=tg_bot._config.admins, msg="Bot was stopped", notify=False
-    )
+    tg_bot._broadcaster.broadcast.assert_not_called()
     mocked(tg_bot._bot.delete_webhook).assert_not_called()
     tg_bot._db.close.assert_awaited_once_with()
     mock_storage_close.assert_awaited_once_with()
@@ -195,7 +195,7 @@ async def test_on_shutdown_webhook(tg_bot: TgBot) -> None:
     :param tg_bot: Instance of TgBot to test.
     :return: None
     """
-    tg_bot._broadcaster.broadcast = AsyncMock()
+    tg_bot._broadcaster.broadcast = AsyncMock()  # Nothing is sent to the admins
     tg_bot._bot.delete_webhook = AsyncMock()
     tg_bot._db.close = AsyncMock()
     mocked(tg_bot._config).webhook = _WEBHOOK
@@ -205,11 +205,51 @@ async def test_on_shutdown_webhook(tg_bot: TgBot) -> None:
     ):
         await tg_bot._on_shutdown()
     mock_shutdown.assert_called_once_with()
-    tg_bot._broadcaster.broadcast.assert_called_once_with(
-        users_ids=tg_bot._config.admins, msg="Bot was stopped", notify=False
-    )
+    tg_bot._broadcaster.broadcast.assert_not_called()
     tg_bot._bot.delete_webhook.assert_called_once()
     tg_bot._db.close.assert_awaited_once_with()
+    mock_storage_close.assert_awaited_once_with()
+
+
+# noinspection PyUnresolvedReferences,PyPropertyAccess
+@pytest.mark.asyncio
+async def test_on_shutdown_closes_after_a_failed_step(tg_bot: TgBot) -> None:
+    """
+    Tests that a failing step of on_shutdown still lets the database and the storage close, and goes on.
+
+    :param tg_bot: Instance of TgBot to test.
+    :return: None
+    """
+    tg_bot._bot.delete_webhook = AsyncMock(side_effect=RuntimeError("network"))
+    tg_bot._db.close = AsyncMock()
+    mocked(tg_bot._config).webhook = _WEBHOOK
+    with (
+        patch.object(target=tg_bot._scheduler, attribute="shutdown"),
+        patch.object(target=tg_bot._dp.storage, attribute="close") as mock_storage_close,
+        pytest.raises(expected_exception=RuntimeError, match="network"),
+    ):
+        await tg_bot._on_shutdown()
+    tg_bot._db.close.assert_awaited_once_with()
+    mock_storage_close.assert_awaited_once_with()
+
+
+# noinspection PyUnresolvedReferences,PyPropertyAccess
+@pytest.mark.asyncio
+async def test_on_shutdown_closes_the_storage_after_a_failed_database(tg_bot: TgBot) -> None:
+    """
+    Tests that the storage is closed even if closing the database fails.
+
+    :param tg_bot: Instance of TgBot to test.
+    :return: None
+    """
+    tg_bot._db.close = AsyncMock(side_effect=OSError("db"))
+    mocked(tg_bot._config).webhook = None
+    with (
+        patch.object(target=tg_bot._scheduler, attribute="shutdown"),
+        patch.object(target=tg_bot._dp.storage, attribute="close") as mock_storage_close,
+        pytest.raises(expected_exception=OSError, match="db"),
+    ):
+        await tg_bot._on_shutdown()
     mock_storage_close.assert_awaited_once_with()
 
 
@@ -250,11 +290,16 @@ async def test_run_webhook(tg_bot: TgBot) -> None:
         patch(target="bot.SimpleRequestHandler") as mock_handler,
         patch(target="bot.setup_application") as mock_setup,
     ):
+        order: list[str] = []
+        mock_setup.side_effect = lambda *_: order.append("setup_application")
+        mock_handler.return_value.register.side_effect = lambda *_, **__: order.append("register")
         mocked(tg_bot._config).webhook = _WEBHOOK
         tg_bot.run()
         await sleep(delay=0.1)
         mock_handler.assert_called_once_with(dispatcher=tg_bot._dp, bot=tg_bot._bot, secret_token="mock_token")
         mock_setup.assert_called_once_with(mock_app.return_value, tg_bot._dp)
+        # The dispatcher's shutdown hooks are added first, so the session is closed after delete_webhook
+        assert order == ["setup_application", "register"]
         mock_run_app.assert_called_once_with(app=mock_app.return_value, host="localhost", port=8080)
         assert tg_bot._on_startup in [handler.callback for handler in tg_bot._dp.startup.handlers]
         assert tg_bot._on_shutdown in [handler.callback for handler in tg_bot._dp.shutdown.handlers]
@@ -287,7 +332,7 @@ async def test_main() -> None:
 @pytest.mark.asyncio
 async def test_main_with_exception() -> None:
     """
-    Tests the main function when an exception occurs.
+    Tests the main function when an exception occurs: it is logged and the process exits with code 1.
 
     :return: None
     """
@@ -299,7 +344,9 @@ async def test_main_with_exception() -> None:
     ):
         mock_bot_instance: MagicMock = mock_tg_bot.return_value
         mock_bot_instance.run = MagicMock(side_effect=Exception("Test error"))
-        main()
+        with pytest.raises(expected_exception=SystemExit) as exit_info:
+            main()
+        assert exit_info.value.code == 1
         mock_logger.info.assert_any_call("Starting bot")
         mock_tg_bot.assert_called_once()
         mock_bot_instance.run.assert_called_once()

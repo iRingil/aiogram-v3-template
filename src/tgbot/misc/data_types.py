@@ -57,6 +57,19 @@ def _validate_https(value: HttpUrl) -> HttpUrl:
     return value
 
 
+def _validate_socket_path(value: Path) -> Path:
+    """
+    Accepts a socket path that is not empty: an empty value in the .env file becomes Path("."), the current folder.
+
+    :param value: The path.
+    :return: The path unchanged.
+    :raises ValueError: if the path is empty.
+    """
+    if value == Path():
+        raise ValueError("The socket path is empty")
+    return value
+
+
 def _validate_secret_token(value: SecretStr) -> SecretStr:
     """
     Accepts a webhook secret token in the format Telegram allows.
@@ -73,6 +86,7 @@ def _validate_secret_token(value: SecretStr) -> SecretStr:
 type _Host = Annotated[str, AfterValidator(_validate_host)]
 type _Port = Annotated[int, Field(gt=0, le=65535)]
 type _NonEmptyStr = Annotated[str, Field(min_length=1)]
+type _SocketPath = Annotated[Path, AfterValidator(_validate_socket_path)]
 
 
 # region TelegramBot
@@ -98,7 +112,7 @@ class WebhookCredentials(BaseModel):
 
     :cvar model_config: Frozen: the values don't change after the config is read.
     :param wh_host: Public HTTPS address of the bot, without the path.
-    :param wh_path: Webhook path, without the leading "/".
+    :param wh_path: Webhook path, without the leading "/": segments of A-Z a-z 0-9 _ - joined by "/".
     :param wh_token: Secret token Telegram sends in every webhook request.
     :param app_host: Address the webapp listens on.
     :param app_port: Port the webapp listens on.
@@ -107,7 +121,7 @@ class WebhookCredentials(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     wh_host: Annotated[HttpUrl, AfterValidator(_validate_https)]
-    wh_path: Annotated[str, Field(pattern=r"^[^/]")]
+    wh_path: Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$")]
     wh_token: Annotated[SecretStr, AfterValidator(_validate_secret_token)]
     app_host: _Host
     app_port: _Port
@@ -134,7 +148,7 @@ class RedisCredentials(BaseModel):
 
     host: _Host | None = None
     port: _Port | None = None
-    socket_path: Path | None = None
+    socket_path: _SocketPath | None = None
     db: NonNegativeInt
     user: _NonEmptyStr
     password: SecretStr
@@ -170,7 +184,7 @@ class PostgresCredentials(BaseModel):
 
     host: _Host | None = None
     port: _Port | None = None
-    socket_path: Path | None = None
+    socket_path: _SocketPath | None = None
     database: _NonEmptyStr
     user: _NonEmptyStr
     password: SecretStr

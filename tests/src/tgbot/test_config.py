@@ -92,7 +92,6 @@ def clear_env() -> Generator[None]:
     env_keys_to_clear: list[str] = [
         "DEBUG",
         "USE_WEBHOOK",
-        "USE_REDIS",
         "USE_REDIS_SOCKET",
         "USE_POSTGRES_SOCKET",
         "BOT_TOKEN",
@@ -216,38 +215,28 @@ def test_config_paths(config_instance: Config, tmp_path: Path) -> None:
     assert expected_tmpl.exists()
 
 
-@pytest.mark.parametrize(
-    ("use_redis", "use_redis_socket", "expect_redis"),
-    [(False, False, False), (True, False, True), (True, True, True), (False, True, False)],
-)
-def test_config_redis(*, use_redis: bool, use_redis_socket: bool, expect_redis: bool, tmp_path: Path) -> None:
+@pytest.mark.parametrize("use_socket", [False, True])
+def test_config_redis(*, use_socket: bool, tmp_path: Path) -> None:
     """
-    Test that Config reads the Redis credentials based on the USE_REDIS and USE_REDIS_SOCKET switches.
+    Test that Config reads the Redis credentials, over a socket or a host and port by USE_REDIS_SOCKET.
 
-    :param use_redis: Value of USE_REDIS in the .env file.
-    :param use_redis_socket: Value of USE_REDIS_SOCKET in the .env file.
-    :param expect_redis: Whether the Redis credentials should be read (True) or not (False).
+    :param use_socket: Value of USE_REDIS_SOCKET in the .env file.
     :param tmp_path: Temporary directory provided by pytest.
     :return: None
     """
-    _write_env(tmp_path=tmp_path, flags=f"USE_REDIS={use_redis}\nUSE_REDIS_SOCKET={use_redis_socket}")
-    config: Config = Config(base_dir=tmp_path)
-    if expect_redis:
-        redis: RedisCredentials | None = config.redis
-        assert isinstance(redis, RedisCredentials)
-        if use_redis_socket:
-            assert redis.socket_path == Path("/var/run/redis/redis-server.sock")
-            assert redis.host is None
-            assert redis.port is None
-        else:
-            assert redis.host == "localhost"
-            assert redis.port == 6379
-            assert redis.socket_path is None
-        assert redis.db == 0
-        assert redis.user == "testuser_redis"
-        assert redis.password.get_secret_value() == "testpass"
+    _write_env(tmp_path=tmp_path, flags=f"USE_REDIS_SOCKET={use_socket}")
+    redis: RedisCredentials = Config(base_dir=tmp_path).redis
+    if use_socket:
+        assert redis.socket_path == Path("/var/run/redis/redis-server.sock")
+        assert redis.host is None
+        assert redis.port is None
     else:
-        assert config.redis is None
+        assert redis.host == "localhost"
+        assert redis.port == 6379
+        assert redis.socket_path is None
+    assert redis.db == 0
+    assert redis.user == "testuser_redis"
+    assert redis.password.get_secret_value() == "testpass"
 
 
 @pytest.mark.parametrize("use_socket", [False, True])
@@ -321,19 +310,19 @@ def test_config_missing_env_var(tmp_path: Path, env_vars_to_remove: list[str], e
     :param error_message_match: Expected substring in the error message.
     :return: None
     """
-    _write_env(tmp_path=tmp_path, flags="USE_REDIS=true\nUSE_WEBHOOK=true", vars_to_remove=env_vars_to_remove)
+    _write_env(tmp_path=tmp_path, flags="USE_WEBHOOK=true", vars_to_remove=env_vars_to_remove)
     with pytest.raises(expected_exception=EnvError, match=error_message_match):
         Config(base_dir=tmp_path)
 
 
 def test_config_missing_redis_socket_path(tmp_path: Path) -> None:
     """
-    Test missing socket path when USE_REDIS and USE_REDIS_SOCKET are true.
+    Test missing socket path when USE_REDIS_SOCKET is true.
 
     :param tmp_path: Temporary directory provided by pytest.
     :return: None
     """
-    _write_env(tmp_path=tmp_path, flags="USE_REDIS=true\nUSE_REDIS_SOCKET=true", vars_to_remove=["REDIS_SOCKET_PATH"])
+    _write_env(tmp_path=tmp_path, flags="USE_REDIS_SOCKET=true", vars_to_remove=["REDIS_SOCKET_PATH"])
     with pytest.raises(expected_exception=EnvError, match="Redis credentials not found"):
         Config(base_dir=tmp_path)
 
@@ -369,7 +358,7 @@ def test_config_invalid_env_var(*, var: str, value: str, error_message_match: st
     :param tmp_path: Temporary directory provided by pytest.
     :return: None
     """
-    _write_env(tmp_path=tmp_path, flags="USE_REDIS=true\nUSE_WEBHOOK=true", vars_to_remove=[var])
+    _write_env(tmp_path=tmp_path, flags="USE_WEBHOOK=true", vars_to_remove=[var])
     env_path: Path = Path(tmp_path.parent, ".env")
     env_path.write_text(data=f"{env_path.read_text(encoding='utf-8')}\n{var}={value}", encoding="utf-8")
     with pytest.raises(expected_exception=EnvError, match=error_message_match):

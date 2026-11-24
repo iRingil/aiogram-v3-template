@@ -15,7 +15,7 @@ import pytest
 from babel.messages.catalog import Catalog
 from babel.messages.mofile import write_mo
 from babel.support import NullTranslations, Translations
-from jinja2 import TemplateNotFound
+from jinja2 import Environment, TemplateNotFound, meta, nodes
 
 from tgbot.misc.data_types import Paths
 from tgbot.misc.tmpl_render import TmplRender
@@ -24,6 +24,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 __all__: tuple[str, ...] = ()
+
+# The bot's own templates (tests/src/tgbot/misc -> the repository root -> src/tgbot)
+_BOT_DIR: Path = Path(__file__).parents[4] / "src" / "tgbot"
+# Markup put into every value of a template, and how it must come out
+_MARKUP: str = '<b>&"'
+_ESCAPED: str = "&lt;b&gt;&amp;&#34;"
 
 
 @pytest.fixture(name="paths")
@@ -126,6 +132,25 @@ async def test_render_data(paths: Paths) -> None:
     assert await tmpl.render(tmpl="static.jinja2", locale="en") == "Static"
 
 
+async def test_render_escapes_data(paths: Paths) -> None:
+    """
+    Test that a passed value is escaped for Telegram HTML, while the markup of the template and the translation stays.
+
+    A user named "<3" would otherwise be taken for a tag and Telegram would reject the message.
+
+    :param paths: Fixture providing the Paths object.
+    :return: None
+    """
+    _write_template(paths, "<b>{% trans %}Hi{% endtrans %}</b> {{ name }}")
+    _write_template(paths, "{% trans name=name %}Hi, {{ name }}{% endtrans %}", name="trans_var.jinja2")
+    _compile_catalog(paths, "ru", {"Hi": "<i>Privet</i>", "Hi, %(name)s": "<i>Privet</i>, %(name)s"})
+    tmpl: TmplRender = TmplRender(paths=paths)
+    name: str = '<3 & <a href="x">'
+    escaped: str = "&lt;3 &amp; &lt;a href=&#34;x&#34;&gt;"
+    assert await tmpl.render(tmpl="test.jinja2", locale="ru", data={"name": name}) == f"<b><i>Privet</i></b> {escaped}"
+    assert await tmpl.render(tmpl="trans_var.jinja2", locale="ru", data={"name": name}) == f"<i>Privet</i>, {escaped}"
+
+
 async def test_render_translation(paths: Paths) -> None:
     """
     Test that a trans block is translated, and a locale without a catalog falls back to the source.
@@ -222,3 +247,30 @@ async def test_render_missing_template(paths: Paths) -> None:
     """
     with pytest.raises(expected_exception=TemplateNotFound):
         await TmplRender(paths=paths).render(tmpl="missing.jinja2", locale="en")
+
+
+@pytest.mark.parametrize(
+    "name", sorted(path.relative_to(_BOT_DIR / "templates").as_posix() for path in _BOT_DIR.rglob("*.jinja2"))
+)
+async def test_bot_templates_escape_their_data(name: str) -> None:
+    """
+    Test that every template of the bot escapes the values passed to it, in both languages.
+
+    Each variable the template uses gets markup; a template that outputs it raw (e.g. marked |safe) fails, since
+    Telegram would reject the message or show the markup of a user.
+
+    :param name: Template path under src/tgbot/templates.
+    :return: None
+    """
+    templates: Path = _BOT_DIR / "templates"
+    source: str = (templates / name).read_text(encoding="utf-8")
+    parsed: nodes.Template = Environment(autoescape=True, extensions=["jinja2.ext.i18n"]).parse(source=source)
+    variables: set[str] = meta.find_undeclared_variables(ast=parsed) - {"gettext", "ngettext", "_"}
+    paths: Paths = Paths(
+        locale=_BOT_DIR / "locales", bot_logo=_BOT_DIR / "assets", temp=_BOT_DIR / "temp", tmpl=templates
+    )
+    tmpl: TmplRender = TmplRender(paths=paths)
+    for locale in ("en", "ru"):
+        rendered: str = await tmpl.render(tmpl=name, locale=locale, data=dict.fromkeys(variables, _MARKUP))
+        assert _MARKUP not in rendered
+        assert rendered.count(_ESCAPED) == sum(source.count("{{ " + variable) for variable in variables)

@@ -5,11 +5,10 @@ from typing import Literal
 
 from aiogram import Bot
 from aiogram.enums import ChatAction
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, Message
 
 from tgbot.config import logger
-from tgbot.misc.decorators import handle_exc
 
 __all__: tuple[str] = ("Broadcaster",)
 
@@ -22,10 +21,12 @@ class Broadcaster:
 
     :cvar _instance: Singleton instance of the Broadcaster.
     :cvar _max_msgs_per_sec: Maximum number of messages per second allowed by Telegram (set to 25 for safety).
+    :cvar _max_attempts: Sends of one message when Telegram answers with a flood limit (RetryAfter).
     """
 
     _instance: "Broadcaster | None" = None
     _max_msgs_per_sec: int = 25
+    _max_attempts: int = 3
 
     def __new__(cls, bot: Bot) -> "Broadcaster":  # noqa: ARG004, PYI034 - a singleton; the bot goes to __init__
         """
@@ -65,7 +66,8 @@ class Broadcaster:
         Sends a message, chat action, or photo, rate limited against every other concurrent call.
 
         Serialized through a shared lock, so every caller gets back the result of its own send,
-        never another concurrent caller's.
+        never another concurrent caller's. On a flood limit (RetryAfter) it waits the time Telegram asks for and
+        sends again, keeping the lock: the limit is the bot's, so the other sends wait too.
 
         :param user_id: Telegram user id.
         :param msg: Message text, or a photo's caption when content_type is "photo".
@@ -75,20 +77,31 @@ class Broadcaster:
         :param reply_to_message_id: Optional message ID to reply to.
         :param photo: PNG image bytes to send, required when content_type is "photo".
         :return: Message ID if the content was sent, None otherwise.
-        :raises aiogram.exceptions.TelegramAPIError: If Telegram rejects the request or can't deliver it.
+        :raises aiogram.exceptions.TelegramAPIError: If Telegram rejects the request or can't deliver it, or still
+            answers with a flood limit after the last attempt.
         """
         async with self._lock:
-            message_id: int | None = await self._send_single_content(
-                user_id=user_id,
-                msg=msg,
-                content_type=content_type,
-                notify=notify,
-                reply_markup=reply_markup,
-                reply_to_message_id=reply_to_message_id,
-                photo=photo,
-            )
-            await sleep(1.0 / self._max_msgs_per_sec)
-            return message_id
+            attempt: int = 1
+            while True:
+                try:
+                    message_id: int | None = await self._send_single_content(
+                        user_id=user_id,
+                        msg=msg,
+                        content_type=content_type,
+                        notify=notify,
+                        reply_markup=reply_markup,
+                        reply_to_message_id=reply_to_message_id,
+                        photo=photo,
+                    )
+                except TelegramRetryAfter as exc:
+                    if attempt >= self._max_attempts:
+                        raise
+                    attempt += 1
+                    logger.warning(f"Target [ID:{user_id}]: flood limit, retrying in {exc.retry_after} s")
+                    await sleep(delay=exc.retry_after)
+                    continue
+                await sleep(delay=1.0 / self._max_msgs_per_sec)
+                return message_id
 
     async def _send_single_content(  # noqa: PLR0913 - mirrors the options of the Telegram send methods
         self,
@@ -142,7 +155,6 @@ class Broadcaster:
         )
         return message.message_id
 
-    @handle_exc
     async def broadcast(  # noqa: PLR0913 - mirrors the options of the Telegram send methods
         self,
         *,
@@ -157,7 +169,8 @@ class Broadcaster:
         """
         Broadcast messages, chat actions, or photos to multiple users with rate limiting.
 
-        A Telegram error for one user (e.g. the bot is blocked) is logged and does not stop the others.
+        A Telegram error for one user (e.g. the bot is blocked) is logged and does not stop the others; any
+        other exception goes to the caller.
 
         :param users_ids: List of telegram user ids.
         :param msg: Message text, or a photo's caption when content_type is "photo".

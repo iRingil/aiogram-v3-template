@@ -1,15 +1,39 @@
-# Configuration for running the bot on a server as a systemd service
+# The bot: long polling, or the webhook server behind nginx (infrastructure/nginx/tgbot.conf).
+#
+# Install: copy to /etc/systemd/system/tgbot.service, then
+#   systemctl daemon-reload && systemctl enable --now tgbot
+# Layout it expects (README.md, "Installation on a server"): the repository in /opt/tgbot, owned by the system user
+# `tgbot`, the virtual environment in /opt/tgbot/.venv, the settings in /opt/tgbot/src/.env.
+# The bot log goes to /opt/tgbot/src/logs/tgbot.log (rotated by infrastructure/logrotate/tgbot); stdout and stderr
+# go to the journal: `journalctl -u tgbot`.
+
 [Unit]
-Description=Telegram-Bot daemon
-After=network.target
+Description=Telegram bot
+After=network.target postgresql.service redis-server.service
 
 [Service]
-User=bot
-Group=bot
-Type=simple
-WorkingDirectory=/opt/tgbot
-ExecStart=/opt/tgbot/.venv/bin/python /opt/tgbot/bot.py
+User=tgbot
+Group=tgbot
+WorkingDirectory=/opt/tgbot/src
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+PrivateTmp=true
+# The code writes its log and temporary files next to itself; "+" creates the folders outside the sandbox
+ExecStartPre=+/usr/bin/install -d -o tgbot -g tgbot /opt/tgbot/src/logs /opt/tgbot/src/tgbot/temp
+ReadWritePaths=-/opt/tgbot/src/logs -/opt/tgbot/src/tgbot/temp
+
+ExecStart=/opt/tgbot/.venv/bin/python bot.py
+
 Restart=always
+# An unreachable PostgreSQL or Redis fails the start; without a pause the restarts soon reach the start limit of
+# systemd and leave the unit failed
+RestartSec=5
+TimeoutStopSec=10
 
 [Install]
 WantedBy=multi-user.target

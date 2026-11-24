@@ -46,12 +46,18 @@ class PostgresClient:
         # Separate parameters instead of a DSN: no escaping of special characters in the password
         # asyncpg takes a Unix socket path as the host
         socket_path: Path | None = self._credentials.socket_path
+        # Without limits a hung server holds every query and the pool forever: asyncpg waits 60 s to connect
+        # and has no query timeout by default. A query that needs longer passes its own timeout.
+        connect_timeout: float = 10.0  # Seconds to open one connection
+        command_timeout: float = 30.0  # Seconds a query may run
         pool: Pool[Record] = create_pool(
             host=str(socket_path) if socket_path is not None else self._credentials.host,
             port=self._credentials.port,
             database=self._credentials.database,
             user=self._credentials.user,
             password=self._credentials.password.get_secret_value(),
+            timeout=connect_timeout,
+            command_timeout=command_timeout,
         )
         self._pool = await pool
 

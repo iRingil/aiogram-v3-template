@@ -20,9 +20,8 @@ class Config:
     Reads variables from the .env file.
 
     The mode switches are read from it too, all false when absent: DEBUG (verbose logging and full
-    tracebacks), USE_WEBHOOK (a webhook instead of long polling), USE_REDIS (Redis FSM storage
-    instead of memory), USE_REDIS_SOCKET (connect to Redis over a Unix socket) and
-    USE_POSTGRES_SOCKET (connect to PostgreSQL over a Unix socket).
+    tracebacks), USE_WEBHOOK (a webhook instead of long polling), USE_REDIS_SOCKET (connect to Redis
+    over a Unix socket) and USE_POSTGRES_SOCKET (connect to PostgreSQL over a Unix socket).
     """
 
     def __init__(self, *, base_dir: Path = _BASE_DIR) -> None:
@@ -43,10 +42,7 @@ class Config:
         self._log_dir: Path = Path(base_dir, "../logs")
         self._admins: list[int] = self._get_admins()
         self._paths: Paths = self._get_paths(base_dir=base_dir)
-        self._redis: RedisCredentials | None = self._get_redis(
-            use_redis=self._env.bool("USE_REDIS", default=False),
-            use_socket=self._env.bool("USE_REDIS_SOCKET", default=False),
-        )
+        self._redis: RedisCredentials = self._get_redis(use_socket=self._env.bool("USE_REDIS_SOCKET", default=False))
         self._postgres: PostgresCredentials = self._get_postgres(
             use_socket=self._env.bool("USE_POSTGRES_SOCKET", default=False)
         )
@@ -120,17 +116,14 @@ class Config:
         """
         return self._paths
 
-    def _get_redis(self, *, use_redis: bool, use_socket: bool) -> RedisCredentials | None:
+    def _get_redis(self, *, use_socket: bool) -> RedisCredentials:
         """
         Returns the Redis connection parameters.
 
-        :param use_redis: True, if Redis is used, otherwise False.
         :param use_socket: True, if a Redis socket is used, otherwise False.
-        :return: RedisCredentials or None.
+        :return: RedisCredentials.
         :raises EnvError: if the Redis credentials are not found in the .env file or are invalid.
         """
-        if not use_redis:
-            return None
         try:
             values: dict[str, object] = {
                 "db": self._env.int("REDIS_DB_INDEX"),
@@ -147,11 +140,11 @@ class Config:
             raise EnvError(f"Redis credentials not found or invalid in the .env file: {exc!r}") from exc
 
     @property
-    def redis(self) -> RedisCredentials | None:
+    def redis(self) -> RedisCredentials:
         """
         Returns the Redis connection parameters.
 
-        :return: RedisCredentials or None.
+        :return: RedisCredentials.
         """
         return self._redis
 

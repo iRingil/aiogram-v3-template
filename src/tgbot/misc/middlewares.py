@@ -1,15 +1,18 @@
 """The module contains middlewares used by the bot."""
 
-from collections import defaultdict, deque
+from asyncio import timeout
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime
-from time import monotonic
+from math import ceil
+from time import time
 from typing import override
+from uuid import uuid4
 
 from aiogram import BaseMiddleware
 from aiogram.enums import ChatType
 from aiogram.types import Chat, TelegramObject, User
 from asyncpg import InterfaceError, PostgresError
+from redis.asyncio import Redis
 
 from tgbot.config import logger
 from tgbot.db.pg_client import PostgresClient
@@ -23,16 +26,25 @@ class AntiFloodMiddleware(BaseMiddleware):
     """
     Drops updates from a user who exceeds a fixed number of updates within a sliding time window.
 
+    The window of a user is a Redis sorted set of the times of their updates, shared by every bot process. It
+    expires together with the window, so Redis itself removes the users who stopped writing.
+
     :cvar _limit: Maximum number of updates allowed from one user within the time window.
     :cvar _period: Length of the sliding time window, in seconds.
+    :cvar _prefix: Prefix of the Redis keys of the windows, followed by the user ID.
     """
 
     _limit: int = 3
     _period: float = 2.0
+    _prefix: str = "tgbot_flood"
 
-    def __init__(self) -> None:
-        """Initializes the per-user history of update timestamps."""
-        self._hits: dict[int, deque[float]] = defaultdict(deque)
+    def __init__(self, *, redis: Redis) -> None:
+        """
+        Initializes the middleware.
+
+        :param redis: Redis client that keeps the windows.
+        """
+        self._redis: Redis = redis
 
     @override
     async def __call__(
@@ -51,18 +63,37 @@ class AntiFloodMiddleware(BaseMiddleware):
         """
         # No user to key the rate limit by, so nothing to throttle.
         user: object = data.get("event_from_user")
-        if not isinstance(user, User):
-            return await handler(event, data)
-        now: float = monotonic()
-        hits: deque[float] = self._hits[user.id]
-        # Drop hits that fell out of the sliding window.
-        while hits and now - hits[0] > self._period:
-            hits.popleft()
-        # Rate limit exceeded within the window - drop the update.
-        if len(hits) >= self._limit:
+        if isinstance(user, User) and not await self._allow(user_id=user.id):
             return None
-        hits.append(now)
         return await handler(event, data)
+
+    async def _allow(self, *, user_id: int) -> bool:
+        """
+        Records an update of the user in their window and tells whether it is within the limit.
+
+        :param user_id: Telegram user ID.
+        :return: True if the update is within the limit, False if it is to be dropped.
+        :raises TypeError: if Redis returns no number of updates in the window.
+        """
+        key: str = f"{self._prefix}:{user_id}"
+        now: float = time()
+        member: str = uuid4().hex  # Two updates within the same moment stay two entries
+        # 1. In one transaction: drop the updates older than the window ("(" - strictly older), add this one,
+        # count the window and renew its expiry
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.zremrangebyscore(name=key, min="-inf", max=f"({now - self._period}")
+            pipe.zadd(name=key, mapping={member: now})
+            pipe.zcard(name=key)
+            pipe.pexpire(name=key, time=ceil(self._period * 1000))
+            results: list[object] = await pipe.execute()
+        count: object = results[2]
+        if not isinstance(count, int):
+            raise TypeError(f"Redis returned {type(count).__name__} for ZCARD, expected int")
+        if count <= self._limit:
+            return True
+        # 2. Over the limit: the dropped update doesn't count towards the window
+        await self._redis.zrem(key, member)
+        return False
 
 
 class UserSyncMiddleware(BaseMiddleware):
@@ -72,8 +103,12 @@ class UserSyncMiddleware(BaseMiddleware):
     The first update of the day upserts the profile fields and last_seen_on (and creates the row for a
     new user); later updates of that day skip the database. The "synced today" set lives in memory, so
     after a restart, or in each of several bot processes, a user is upserted once more - harmless.
-    A database error is logged and does not stop the update; the next update retries.
+    A database error or a slow database is logged and does not stop the update; the next update retries.
+
+    :cvar _timeout: Seconds the upsert may take, waiting for a free connection of the pool included.
     """
+
+    _timeout: float = 3.0
 
     def __init__(self, *, client: PostgresClient) -> None:
         """
@@ -133,8 +168,11 @@ class UserSyncMiddleware(BaseMiddleware):
             registered_on=today,
             last_seen_on=today,
         )
+        # A hung database would otherwise hold every update of an unsynced user and use up the pool
+        # OSError covers TimeoutError of the time limit and the network errors
         try:
-            await UserRepo(db=self._client.pool).upsert(user=tg_user)
+            async with timeout(delay=self._timeout):
+                await UserRepo(db=self._client.pool).upsert(user=tg_user)
         except (PostgresError, InterfaceError, OSError) as exc:
             logger.error(f"Failed to save user {user.id}: {exc!r}")
             return

@@ -132,6 +132,29 @@ def test_redis_rejects_negative_db() -> None:
         RedisCredentials.model_validate({**_REDIS, "db": -1, "host": "localhost", "port": 6379})
 
 
+@pytest.mark.parametrize("model", [PostgresCredentials, RedisCredentials])
+def test_rejects_empty_socket_path(model: type[PostgresCredentials | RedisCredentials]) -> None:
+    """
+    An empty socket path (an empty value in the .env file) is rejected instead of becoming the current folder.
+
+    :param model: The credentials model.
+    :return: None
+    """
+    with pytest.raises(expected_exception=ValidationError, match="The socket path is empty"):
+        model.model_validate({**_POSTGRES, **_REDIS, "socket_path": ""})
+
+
+@pytest.mark.parametrize("path", ["hook", "bot/hook-1_x"])
+def test_webhook_path_valid(path: str) -> None:
+    """
+    A path of one or more segments of letters, digits, "_" and "-" is accepted.
+
+    :param path: The webhook path.
+    :return: None
+    """
+    assert WebhookCredentials.model_validate({**_WEBHOOK, "wh_path": path}).wh_path == path
+
+
 def test_webhook_valid() -> None:
     """
     Valid webhook values are accepted, the token kept secret.
@@ -149,6 +172,9 @@ def test_webhook_valid() -> None:
     [
         ("wh_host", "http://bot.example.com", "is not an HTTPS URL"),
         ("wh_path", "/hook", "String should match pattern"),
+        ("wh_path", "a/../b", "String should match pattern"),
+        ("wh_path", "hook?x=1", "String should match pattern"),
+        ("wh_path", "hook/", "String should match pattern"),
         ("wh_token", "a b", "must be 1-256 characters"),
         ("wh_token", "a" * 257, "must be 1-256 characters"),
         ("wh_token", "", "must be 1-256 characters"),

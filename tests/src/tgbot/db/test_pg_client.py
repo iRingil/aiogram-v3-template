@@ -71,7 +71,7 @@ async def test_connect_twice_keeps_the_pool(pg_client: PostgresClient) -> None:
 
 async def test_connect_over_socket() -> None:
     """
-    connect() passes the socket path as the host, which is how asyncpg takes a Unix socket.
+    connect() passes the socket path as the host, which is how asyncpg takes a Unix socket, and the time limits.
 
     No socket is reachable from the tests, so create_pool is replaced.
 
@@ -84,7 +84,13 @@ async def test_connect_over_socket() -> None:
     with patch(target="tgbot.db.pg_client.create_pool", return_value=_AwaitablePool(pool=pool)) as mock_create:
         await PostgresClient(credentials=credentials).connect()
     mock_create.assert_called_once_with(
-        host=str(credentials.socket_path), port=None, database="db", user="user", password="pass"
+        host=str(credentials.socket_path),
+        port=None,
+        database="db",
+        user="user",
+        password="pass",
+        timeout=10.0,
+        command_timeout=30.0,
     )
 
 

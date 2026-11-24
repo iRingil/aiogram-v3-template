@@ -1,5 +1,6 @@
 """Main program module."""
 
+import sys
 from asyncio import run
 from typing import TYPE_CHECKING, ClassVar
 
@@ -7,7 +8,6 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode, UpdateType
 from aiogram.fsm.storage.base import DefaultKeyBuilder
-from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp.web import run_app
@@ -27,7 +27,7 @@ from tgbot.misc.tmpl_render import TmplRender
 from tgbot.storage.redis_client import RedisClient
 
 if TYPE_CHECKING:
-    from tgbot.misc.data_types import RedisCredentials
+    from redis.asyncio import Redis
 
 __all__: tuple[str, ...] = ()
 
@@ -56,14 +56,12 @@ class TgBot:
                 parse_mode=ParseMode.HTML, allow_sending_without_reply=True, link_preview_is_disabled=True
             ),
         )
-        redis: RedisCredentials | None = self._config.redis
-        storage: MemoryStorage | RedisStorage = (
-            RedisStorage(redis=RedisClient(credentials=redis).redis, key_builder=DefaultKeyBuilder(prefix="tgbot_fsm"))
-            if redis is not None
-            else MemoryStorage()
+        # One Redis client for the FSM storage and the anti-flood windows; the storage closes it on shutdown
+        redis: Redis = RedisClient(credentials=self._config.redis).redis
+        self._dp: Dispatcher = Dispatcher(
+            storage=RedisStorage(redis=redis, key_builder=DefaultKeyBuilder(prefix="tgbot_fsm"))
         )
-        self._dp: Dispatcher = Dispatcher(storage=storage)
-        self._dp.update.outer_middleware(AntiFloodMiddleware())
+        self._dp.update.outer_middleware(AntiFloodMiddleware(redis=redis))
         self._db: PostgresClient = PostgresClient(credentials=self._config.postgres)
         # After the anti-flood middleware, so the updates it drops don't reach the database
         self._dp.update.outer_middleware(UserSyncMiddleware(client=self._db))
@@ -91,25 +89,28 @@ class TgBot:
                 drop_pending_updates=False,
                 secret_token=webhook.wh_token.get_secret_value(),
             )
-        await self._broadcaster.broadcast(users_ids=self._config.admins, msg="Bot was started", notify=False)
 
     async def _on_shutdown(self) -> None:
         """
         The functions that runs when the bot is stopped.
 
         Stops the scheduler first, waiting for a running job to finish (Scheduler.shutdown waits by
-        default), before closing the database and the FSM storage a job might still be using. The bot session is left
+        default), before closing the database and the FSM storage a job might still be using. The database and the
+        storage are closed even if a step before fails; the error still goes on to main(). The bot session is left
         to aiogram, which closes it after this hook: closing it here would cut the long-polling
         request that is still waiting for updates.
 
         :return: None
         """
-        self._scheduler.shutdown()
-        if self._config.webhook:
-            await self._bot.delete_webhook()
-        await self._broadcaster.broadcast(users_ids=self._config.admins, msg="Bot was stopped", notify=False)
-        await self._db.close()
-        await self._dp.storage.close()
+        try:
+            self._scheduler.shutdown()
+            if self._config.webhook:
+                await self._bot.delete_webhook()
+        finally:
+            try:
+                await self._db.close()
+            finally:
+                await self._dp.storage.close()
 
     def run(self) -> None:
         """
@@ -122,10 +123,13 @@ class TgBot:
         self._dp.shutdown.register(callback=self._on_shutdown)
         if (webhook := self._config.webhook) is not None:
             app: Application = Application()
+            # aiohttp runs the shutdown hooks in the order they were added: the dispatcher's (_on_shutdown, which
+            # calls delete_webhook) must come before the request handler's, which closes the bot session.
+            # The other way round delete_webhook opens a new session that nobody closes ("Unclosed client session")
+            setup_application(app, self._dp)
             SimpleRequestHandler(
                 dispatcher=self._dp, bot=self._bot, secret_token=webhook.wh_token.get_secret_value()
             ).register(app, path=f"/{webhook.wh_path}")
-            setup_application(app, self._dp)
             run_app(app=app, host=webhook.app_host, port=webhook.app_port)
         else:
             # The aiogram start_polling accepts untyped **kwargs
@@ -139,6 +143,8 @@ def main() -> None:
     """
     Reads the config, sets up logging, then runs the bot and logs its start, stop and unhandled errors.
 
+    An unhandled error ends the process with exit code 1, so systemd and the shell see the failure.
+
     :return: None
     """
     config: Config = Config()
@@ -151,6 +157,7 @@ def main() -> None:
         pass
     except Exception as exc:  # noqa: BLE001 - the last resort: logs whatever stopped the bot
         logger.critical(f"Unhandled error: {exc!r}")
+        sys.exit(1)
     finally:
         logger.info("Bot stopped!")
 

@@ -63,9 +63,10 @@ class BaseService:
         Returns the language code of a user.
 
         :param user: Telegram user, if known.
-        :return: Language code reported by Telegram, or the default locale.
+        :return: First two characters of the language code reported by Telegram, or the default locale.
         """
-        return user.language_code if user is not None and user.language_code else cls._DEFAULT_LOCALE
+        # The locale folders are named by two letters, as the locale column of the users table
+        return user.language_code[:2] if user is not None and user.language_code else cls._DEFAULT_LOCALE
 
     @staticmethod
     def _bot_of(event: Message | CallbackQuery) -> Bot:
