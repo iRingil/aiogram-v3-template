@@ -3,13 +3,13 @@ Unit tests for src/tgbot/misc/middlewares.py (AntiFloodMiddleware and UserSyncMi
 
 AntiFloodMiddleware keeps its windows in the test Redis; its clock (middlewares.time) is replaced with _FakeClock,
 which tests advance explicitly. The wrapped handler is a scripted async spy (_HandlerSpy) rather than a mock.
-UserSyncMiddleware gets a fake UTC date and writes to the test PostgreSQL.
+UserSyncMiddleware gets a fake UTC date, writes to the test PostgreSQL and keeps its marks in the test Redis.
 """
 
 # ruff: noqa: PLR2004, S101, SLF001
 
 from asyncio import sleep
-from datetime import date
+from datetime import UTC, date, datetime, time
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -24,6 +24,7 @@ from tgbot.db.users import UserRepo
 from tgbot.misc import middlewares
 from tgbot.misc.data_types import TgUser
 from tgbot.misc.middlewares import AntiFloodMiddleware, UserSyncMiddleware
+from tgbot.storage.synced_users import SyncedUsers
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -370,7 +371,7 @@ _PRIVATE_CHAT: Chat = Chat(id=7, type="private")
 
 
 class _FakeToday:
-    """A stand-in for middlewares.datetime whose now().date() returns a date the test sets."""
+    """A stand-in for middlewares.datetime whose now() is noon (UTC) of a date the test sets."""
 
     def __init__(self, today: date) -> None:
         """
@@ -380,17 +381,15 @@ class _FakeToday:
         """
         self.today: date = today
 
-    def now(self, tz: object) -> MagicMock:
+    def now(self, tz: object) -> datetime:
         """
-        Returns an object whose date() is the current fake date.
+        Returns noon of the current fake date.
 
-        :param tz: Time zone the middleware asks for; ignored.
-        :return: A mock with date() returning the fake date.
+        :param tz: Time zone the middleware asks for; always UTC.
+        :return: The fake current time.
         """
         del tz
-        moment: MagicMock = MagicMock()
-        moment.date.return_value = self.today
-        return moment
+        return datetime.combine(date=self.today, time=time(hour=12), tzinfo=UTC)
 
 
 @pytest.fixture(name="today")
@@ -418,17 +417,29 @@ async def users_fixture(pg_client: PostgresClient) -> UserRepo:
     return UserRepo(db=pg_client.pool)
 
 
-@pytest.fixture(name="sync")
-def sync_fixture(today: _FakeToday, pg_client: PostgresClient) -> UserSyncMiddleware:
+@pytest.fixture(name="synced")
+def synced_fixture(redis: Redis) -> SyncedUsers:
     """
-    A fresh UserSyncMiddleware over the test PostgreSQL, created on the fake date.
+    The store of the users saved today, over the empty test Redis.
 
-    :param today: The fake clock, set before the middleware reads the date.
+    :param redis: The test Redis client.
+    :return: The store.
+    """
+    return SyncedUsers(redis=redis)
+
+
+@pytest.fixture(name="sync")
+def sync_fixture(today: _FakeToday, pg_client: PostgresClient, synced: SyncedUsers) -> UserSyncMiddleware:
+    """
+    A UserSyncMiddleware over the test PostgreSQL and Redis, running on the fake date.
+
+    :param today: The fake clock the middleware reads the date from.
     :param pg_client: The test client.
+    :param synced: The store of the users saved today.
     :return: The UserSyncMiddleware instance under test.
     """
     del today
-    return UserSyncMiddleware(client=pg_client)
+    return UserSyncMiddleware(client=pg_client, synced=synced)
 
 
 def _tg_user(
@@ -641,6 +652,48 @@ class TestUserSync:
             await sync(handler=handler, event=_EVENT, data=_tg_user())
         assert await users.get(user_id=7) is not None
         assert len(handler.calls) == 2
+
+    async def test_deleted_user_is_saved_again_the_same_day(
+        self, sync: UserSyncMiddleware, users: UserRepo, handler: _HandlerSpy, synced: SyncedUsers
+    ) -> None:
+        """
+        After the user's data is deleted (the row and the "saved today" mark), the next update creates the row again.
+
+        :param sync: The UserSyncMiddleware fixture.
+        :param users: The repository to check the table.
+        :param handler: The handler spy fixture.
+        :param synced: The store of the users saved today.
+        :return: None
+        """
+        await sync(handler=handler, event=_EVENT, data=_tg_user())
+        await users.delete(user_id=7)
+        await synced.forget(user_id=7)
+        await sync(handler=handler, event=_EVENT, data=_tg_user())
+        assert await users.get(user_id=7) is not None
+
+    async def test_mark_is_shared_between_instances(
+        self,
+        sync: UserSyncMiddleware,
+        users: UserRepo,
+        handler: _HandlerSpy,
+        pg_client: PostgresClient,
+        synced: SyncedUsers,
+    ) -> None:
+        """
+        A user saved by one middleware instance (one bot process) is not saved again by another the same day.
+
+        :param sync: The UserSyncMiddleware fixture.
+        :param users: The repository to check the table.
+        :param handler: The handler spy fixture.
+        :param pg_client: The test client.
+        :param synced: The store of the users saved today.
+        :return: None
+        """
+        await sync(handler=handler, event=_EVENT, data=_tg_user())
+        await users.delete(user_id=7)
+        other: UserSyncMiddleware = UserSyncMiddleware(client=pg_client, synced=synced)
+        await other(handler=handler, event=_EVENT, data=_tg_user())
+        assert await users.get(user_id=7) is None
 
     async def test_slow_database_is_given_up(
         self, sync: UserSyncMiddleware, users: UserRepo, handler: _HandlerSpy, monkeypatch: pytest.MonkeyPatch

@@ -3,7 +3,7 @@
 from asyncio import sleep
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, MaybeInaccessibleMessageUnion, Message, User
 
 from tgbot.config import Config
@@ -90,12 +90,13 @@ class BaseService:
         """
         Edit the existing message from a callback if possible, otherwise send a new one.
 
-        Shows a fixed alert "Action expired" if editing fails (e.g., message older than 48 hours).
+        Shows a fixed alert "Action expired" once the new message is sent (e.g., the old one is older than 48 hours).
 
         :param call: The callback query to edit or reply to.
         :param text: The text to send or edit into the message.
         :param reply_markup: The keyboard markup to include (optional).
         :return: The edited message or a new one.
+        :raises aiogram.exceptions.TelegramAPIError: if the new message can't be sent either; the callback is answered.
         """
         origin: MaybeInaccessibleMessageUnion | None = call.message
         # Trying to edit an existing message, if it does not exist or 48 hours have passed, the try will fail
@@ -110,16 +111,25 @@ class BaseService:
             else:
                 await call.answer()
                 return edited if isinstance(edited, Message) else origin
-        # If the message is too old, send a new one
+        # The message can't be edited (e.g. older than 48 hours, or deleted): send the content as a new one.
+        # The "Action expired" alert is shown only once the new message is sent: an edit that failed for another
+        # reason (e.g. a markup error) fails the send too, and then there is nothing expired to tell the user about
+        try:
+            sent: Message = (
+                await self._bot_of(event=call).send_message(
+                    chat_id=call.from_user.id, text=text, reply_markup=reply_markup
+                )
+                if origin is None
+                else await origin.answer(text=text, reply_markup=reply_markup)
+            )
+        except TelegramAPIError:
+            await call.answer()  # Stops the button's loading indicator; the error goes on to the error handler
+            raise
         alert_text: str = await self._tmpl.render(
             tmpl=self._msg_expired_action, locale=self._locale(user=call.from_user)
         )
         await call.answer(text=alert_text, show_alert=True)
-        if origin is None:
-            return await self._bot_of(event=call).send_message(
-                chat_id=call.from_user.id, text=text, reply_markup=reply_markup
-            )
-        return await origin.answer(text=text, reply_markup=reply_markup)
+        return sent
 
     @staticmethod
     async def _edit_or_send_msg(

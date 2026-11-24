@@ -4,18 +4,24 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
 from aiogram import Dispatcher, F, Router
 from aiogram.filters import Command
+from aiogram.filters.callback_data import CallbackQueryFilter
 from aiogram.utils.magic_filter import MagicFilter
 from pytest_mock import MockerFixture
 
 from tgbot.handlers.errors import ErrHandler
 from tgbot.handlers.main import MainHandler
 from tgbot.misc.filters import IsAdmin
+from tgbot.misc.keyboards import ProfileCallback
+
+if TYPE_CHECKING:
+    from magic_filter import MagicFilter as BaseMagicFilter
 
 __all__: tuple[str, ...] = ()
 
@@ -34,6 +40,8 @@ class Mocks:
     :param mock_dp: Dispatcher passed to MainHandler.
     :param mock_tmpl: TmplRender passed to MainHandler.
     :param mock_kb: KeyboardManager passed to MainHandler.
+    :param mock_db: PostgresClient passed to MainHandler.
+    :param mock_synced: SyncedUsers passed to MainHandler.
     :param mock_is_admin: Patched IsAdmin class.
     :param mock_is_admin_instance: Instance the patched IsAdmin returns.
     :param mock_admin_service: Patched AdminService class.
@@ -60,6 +68,8 @@ class Mocks:
     mock_dp: MagicMock
     mock_tmpl: MagicMock
     mock_kb: MagicMock
+    mock_db: MagicMock
+    mock_synced: MagicMock
     mock_is_admin: MagicMock
     mock_is_admin_instance: MagicMock
     mock_admin_service: MagicMock
@@ -95,6 +105,8 @@ def mocks(mocker: MockerFixture) -> Mocks:
         mock_dp=MagicMock(spec=Dispatcher),
         mock_tmpl=MagicMock(),
         mock_kb=MagicMock(),
+        mock_db=MagicMock(),
+        mock_synced=MagicMock(),
         mock_is_admin=mocker.patch("tgbot.handlers.main.IsAdmin"),
         mock_is_admin_instance=MagicMock(spec=IsAdmin),
         mock_admin_service=mocker.patch("tgbot.handlers.main.AdminService"),
@@ -126,6 +138,7 @@ def mocks(mocker: MockerFixture) -> Mocks:
     result.mock_profile_handler.return_value = result.mock_profile_hdlr_instance
     result.mock_settings_handler.return_value = result.mock_settings_hdlr_instance
     result.mock_private_router.message = MagicMock()
+    result.mock_private_router.callback_query = MagicMock()
     result.mock_private_router.errors = MagicMock()
     result.mock_router.return_value = result.mock_private_router
     return result
@@ -142,7 +155,12 @@ class TestMainHandler:
         :return: None
         """
         main_handler: MainHandler = MainHandler(
-            config=mocks.mock_config, dp=mocks.mock_dp, tmpl=mocks.mock_tmpl, kb=mocks.mock_kb
+            config=mocks.mock_config,
+            dp=mocks.mock_dp,
+            tmpl=mocks.mock_tmpl,
+            kb=mocks.mock_kb,
+            db=mocks.mock_db,
+            synced=mocks.mock_synced,
         )
         mocks.mock_is_admin.assert_called_once_with(admins_ids=mocks.mock_config.admins)
         assert main_handler._is_admin == mocks.mock_is_admin_instance
@@ -153,7 +171,7 @@ class TestMainHandler:
             config=mocks.mock_config, tmpl=mocks.mock_tmpl, kb=mocks.mock_kb
         )
         mocks.mock_profile_service.assert_called_once_with(
-            config=mocks.mock_config, tmpl=mocks.mock_tmpl, kb=mocks.mock_kb
+            config=mocks.mock_config, tmpl=mocks.mock_tmpl, kb=mocks.mock_kb, db=mocks.mock_db, synced=mocks.mock_synced
         )
         mocks.mock_settings_service.assert_called_once_with(
             config=mocks.mock_config, tmpl=mocks.mock_tmpl, kb=mocks.mock_kb
@@ -170,7 +188,14 @@ class TestMainHandler:
         :param mocks: Mocks of everything MainHandler receives or creates.
         :return: None
         """
-        MainHandler(config=mocks.mock_config, dp=mocks.mock_dp, tmpl=mocks.mock_tmpl, kb=mocks.mock_kb)
+        MainHandler(
+            config=mocks.mock_config,
+            dp=mocks.mock_dp,
+            tmpl=mocks.mock_tmpl,
+            kb=mocks.mock_kb,
+            db=mocks.mock_db,
+            synced=mocks.mock_synced,
+        )
         mocks.mock_router.assert_called_once_with(name="Private chat")
         # Checking the router filter
         router_filter_call = mocks.mock_private_router.message.filter.call_args
@@ -190,6 +215,10 @@ class TestMainHandler:
             (  # command /help
                 mocks.mock_profile_hdlr_instance.cmd_help,
                 [(Command, {"commands": ("help",)})],
+            ),
+            (  # command /profile
+                mocks.mock_profile_hdlr_instance.cmd_profile,
+                [(Command, {"commands": ("profile",)})],
             ),
             (  # command /settings
                 mocks.mock_settings_hdlr_instance.cmd_or_msg_settings,
@@ -246,3 +275,43 @@ class TestMainHandler:
                     )
         # Checking error handler registration
         mocks.mock_private_router.errors.register.assert_called_once_with(ErrHandler)
+
+    def test_register_callbacks(self, mocks: Mocks) -> None:
+        """
+        Test that the buttons are handled in private chats only and each profile button goes to its own handler.
+
+        The rules are checked by what they match: magic filters don't compare as values.
+
+        :param mocks: Mocks of everything MainHandler receives or creates.
+        :return: None
+        """
+        MainHandler(
+            config=mocks.mock_config,
+            dp=mocks.mock_dp,
+            tmpl=mocks.mock_tmpl,
+            kb=mocks.mock_kb,
+            db=mocks.mock_db,
+            synced=mocks.mock_synced,
+        )
+        router_rule: MagicFilter = mocks.mock_private_router.callback_query.filter.call_args.args[0]
+        private: SimpleNamespace = SimpleNamespace(message=SimpleNamespace(chat=SimpleNamespace(type="private")))
+        group: SimpleNamespace = SimpleNamespace(message=SimpleNamespace(chat=SimpleNamespace(type="group")))
+        assert router_rule.resolve(private) is True
+        assert router_rule.resolve(group) is False
+        hdlr: MagicMock = mocks.mock_profile_hdlr_instance
+        expected: list[tuple[Callable[..., Any], str]] = [
+            (hdlr.call_delete_request, "delete"),
+            (hdlr.call_delete_cancel, "cancel"),
+            (hdlr.call_delete_confirm, "confirm"),
+        ]
+        registrations = mocks.mock_private_router.callback_query.register.call_args_list
+        assert len(registrations) == len(expected)
+        for registration, (handler, action) in zip(registrations, expected, strict=True):
+            registered_handler, callback_filter = registration.args
+            assert registered_handler == handler
+            assert isinstance(callback_filter, CallbackQueryFilter)
+            assert callback_filter.callback_data is ProfileCallback
+            rule: BaseMagicFilter | None = callback_filter.rule
+            assert rule is not None
+            for other in ("delete", "cancel", "confirm"):
+                assert rule.resolve(SimpleNamespace(action=other)) is (other == action)

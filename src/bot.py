@@ -25,6 +25,7 @@ from tgbot.misc.middlewares import AntiFloodMiddleware, UserSyncMiddleware
 from tgbot.misc.scheduler import Scheduler
 from tgbot.misc.tmpl_render import TmplRender
 from tgbot.storage.redis_client import RedisClient
+from tgbot.storage.synced_users import SyncedUsers
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -56,15 +57,17 @@ class TgBot:
                 parse_mode=ParseMode.HTML, allow_sending_without_reply=True, link_preview_is_disabled=True
             ),
         )
-        # One Redis client for the FSM storage and the anti-flood windows; the storage closes it on shutdown
+        # One Redis client for the FSM storage, the anti-flood windows and the stores; the storage closes it on
+        # shutdown
         redis: Redis = RedisClient(credentials=self._config.redis).redis
         self._dp: Dispatcher = Dispatcher(
             storage=RedisStorage(redis=redis, key_builder=DefaultKeyBuilder(prefix="tgbot_fsm"))
         )
         self._dp.update.outer_middleware(AntiFloodMiddleware(redis=redis))
         self._db: PostgresClient = PostgresClient(credentials=self._config.postgres)
+        self._synced: SyncedUsers = SyncedUsers(redis=redis)
         # After the anti-flood middleware, so the updates it drops don't reach the database
-        self._dp.update.outer_middleware(UserSyncMiddleware(client=self._db))
+        self._dp.update.outer_middleware(UserSyncMiddleware(client=self._db, synced=self._synced))
         self._broadcaster: Broadcaster = Broadcaster(bot=self._bot)
         self._tmpl: TmplRender = TmplRender(paths=self._config.paths)
         self._kb: KeyboardManager = KeyboardManager(tmpl=self._tmpl)
@@ -118,7 +121,7 @@ class TgBot:
 
         :return: None
         """
-        MainHandler(config=self._config, dp=self._dp, tmpl=self._tmpl, kb=self._kb)
+        MainHandler(config=self._config, dp=self._dp, tmpl=self._tmpl, kb=self._kb, db=self._db, synced=self._synced)
         self._dp.startup.register(callback=self._on_startup)
         self._dp.shutdown.register(callback=self._on_shutdown)
         if (webhook := self._config.webhook) is not None:

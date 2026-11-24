@@ -94,6 +94,12 @@ def test_init(tg_bot: TgBot) -> None:
     )
     assert isinstance(tg_bot._dp.storage, RedisStorage)
     assert anti_flood._redis is tg_bot._dp.storage.redis
+    # The user sync keeps its "saved today" marks in that Redis too, the same store the profile forgets them in
+    user_sync: UserSyncMiddleware = next(
+        middleware for middleware in tg_bot._dp.update.outer_middleware if isinstance(middleware, UserSyncMiddleware)
+    )
+    assert user_sync._synced is tg_bot._synced
+    assert tg_bot._synced._redis is tg_bot._dp.storage.redis
     assert tg_bot._bot.default == DefaultBotProperties(
         parse_mode="HTML", allow_sending_without_reply=True, link_preview_is_disabled=True
     )

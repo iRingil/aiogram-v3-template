@@ -1,0 +1,108 @@
+# Translations template for Telegram-Bot.
+# Copyright (C) 2026 ORGANIZATION
+# This file is distributed under the same license as the Telegram-Bot project.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: Telegram-Bot 1.0.0\n"
+"Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
+"POT-Creation-Date: 2026-11-24 15:44+0200\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.18.0\n"
+
+#: src/tgbot/templates/admin/cmd_admin.jinja2:1
+msgid "Admin panel"
+msgstr ""
+
+#: src/tgbot/templates/admin/msg_admin_panel.jinja2:1
+msgid "Admin panel:"
+msgstr ""
+
+#: src/tgbot/templates/admin/msg_admin_panel.jinja2:3
+msgid "This message is a stub for the admin panel rendering."
+msgstr ""
+
+#: src/tgbot/templates/common/cmd_help.jinja2:1
+msgid "How to use the bot"
+msgstr ""
+
+#: src/tgbot/templates/common/cmd_profile.jinja2:1
+msgid "Your profile"
+msgstr ""
+
+#: src/tgbot/templates/common/cmd_settings.jinja2:1
+msgid "Settings"
+msgstr ""
+
+#: src/tgbot/templates/common/cmd_start.jinja2:1
+msgid "Start the bot"
+msgstr ""
+
+#: src/tgbot/templates/common/msg_expired_action.jinja2:1
+msgid "Action expired. Please use the latest menu below:"
+msgstr ""
+
+#: src/tgbot/templates/common/msg_unsupported.jinja2:1
+msgid "Unsupported content."
+msgstr ""
+
+#: src/tgbot/templates/profile/cmd_help.jinja2:1 src/tgbot/templates/profile/cmd_start.jinja2:1
+#, python-format
+msgid "Hi, %(name)s!"
+msgstr ""
+
+#: src/tgbot/templates/profile/cmd_help.jinja2:4
+msgid "This message is a stub for the /help command rendering."
+msgstr ""
+
+#: src/tgbot/templates/profile/cmd_start.jinja2:4
+msgid "This message is a stub for the /start command rendering."
+msgstr ""
+
+#: src/tgbot/templates/profile/kb_delete_cancel.jinja2:1
+msgid "No, cancel"
+msgstr ""
+
+#: src/tgbot/templates/profile/kb_delete_confirm.jinja2:1
+msgid "Yes, delete"
+msgstr ""
+
+#: src/tgbot/templates/profile/kb_delete_data.jinja2:1
+msgid "Delete my data"
+msgstr ""
+
+#: src/tgbot/templates/profile/msg_data_deleted.jinja2:1
+msgid "Your data has been deleted. If you write to the bot again later, it will save your profile anew."
+msgstr ""
+
+#: src/tgbot/templates/profile/msg_delete_confirm.jinja2:1
+msgid "Delete your data?"
+msgstr ""
+
+#: src/tgbot/templates/profile/msg_delete_confirm.jinja2:3
+msgid "Your profile will be erased from the bot's database. This cannot be undone."
+msgstr ""
+
+#: src/tgbot/templates/profile/msg_profile.jinja2:3
+msgid "User ID"
+msgstr ""
+
+#: src/tgbot/templates/profile/msg_profile.jinja2:5
+msgid "Registered"
+msgstr ""
+
+#: src/tgbot/templates/settings/msg_settings.jinja2:1
+msgid "Settings:"
+msgstr ""
+
+#: src/tgbot/templates/settings/msg_settings.jinja2:3
+msgid "This message is a stub for the settings rendering."
+msgstr ""
+

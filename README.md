@@ -64,6 +64,8 @@ scaffolding with the plumbing a production bot needs already in place, covered b
 ### Features
 
 - **Layered handlers** - thin aiogram handlers, services with the logic, Jinja2 templates for every message.
+- **Profile** - `/profile` shows the user's ID and registration date and lets them delete their data, with a
+  confirmation: the sample screen with inline buttons.
 - **English and Russian** - messages and the command menu are translated with Babel, per user language.
 - **PostgreSQL** - a connection pool, transactions, typed rows and a `users` table the bot fills on its own.
 - **Redis** - FSM storage and an anti-flood limit shared by every bot process.
@@ -109,8 +111,7 @@ cp src/.env.example src/.env
    false when absent: `DEBUG` (verbose logs and full tracebacks - never in production), `USE_WEBHOOK`
    (`WEBHOOK_*` and `WEBAPP_*` are then required), `USE_POSTGRES_SOCKET` / `USE_REDIS_SOCKET` (a Unix socket
    instead of a host and a port).
-2. Compile the translations: `infrastructure/localization/compile_translations.sh` (`.cmd` on Windows).
-3. Run: `cd src && python bot.py`
+2. Run: `cd src && python bot.py`
 
 Logs are written to `src/logs/`.
 
@@ -119,8 +120,8 @@ Logs are written to `src/logs/`.
 Messages are Jinja2 templates with `{% trans %}` blocks; translations live in `src/tgbot/locales/<lang>`. After a
 change of the translatable texts run the scripts in `infrastructure/localization/` in this order:
 `extract_strings_for_translate`, `update_translations` (`init_translations` for a new language), then
-`compile_translations` - the bot reads only the compiled `.mo` files, which are not kept in git. The language list
-is in the update and init scripts.
+`compile_translations` - the bot reads only the compiled `.mo` files, so commit them together with the `.po`.
+The language list is in the update and init scripts.
 
 ### Development
 
@@ -156,11 +157,10 @@ useradd --system --home-dir /opt/tgbot --shell /usr/sbin/nologin tgbot
 install -d -o tgbot -g tgbot /opt/tgbot
 sudo -u tgbot git clone --branch <tag> --depth 1 https://github.com/<you>/<your-bot>.git /opt/tgbot
 
-# 2. The environment and the translations
+# 2. The environment (the compiled translations come with the code)
 cd /opt/tgbot
 sudo -u tgbot python3.13 -m venv .venv
 sudo -u tgbot .venv/bin/pip install -r src/requirements.txt
-sudo -u tgbot .venv/bin/pybabel compile --directory=src/tgbot/locales
 
 # 3. The settings
 sudo -u tgbot install -m 600 src/.env.example src/.env

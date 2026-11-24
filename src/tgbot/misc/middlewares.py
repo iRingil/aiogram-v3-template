@@ -18,6 +18,7 @@ from tgbot.config import logger
 from tgbot.db.pg_client import PostgresClient
 from tgbot.db.users import UserRepo
 from tgbot.misc.data_types import TgUser
+from tgbot.storage.synced_users import SyncedUsers
 
 __all__: tuple[str, ...] = ("AntiFloodMiddleware", "UserSyncMiddleware")
 
@@ -101,24 +102,25 @@ class UserSyncMiddleware(BaseMiddleware):
     Writes the sending user of a private chat to the users table once per UTC day.
 
     The first update of the day upserts the profile fields and last_seen_on (and creates the row for a
-    new user); later updates of that day skip the database. The "synced today" set lives in memory, so
-    after a restart, or in each of several bot processes, a user is upserted once more - harmless.
-    A database error or a slow database is logged and does not stop the update; the next update retries.
+    new user); later updates of that day skip the database. Who is saved today is kept in Redis
+    (SyncedUsers), shared by every bot process; deleting a user's data forgets the user there too, so the
+    next update creates the row again. A database error or a slow database is logged and does not stop
+    the update; the next update retries.
 
     :cvar _timeout: Seconds the upsert may take, waiting for a free connection of the pool included.
     """
 
     _timeout: float = 3.0
 
-    def __init__(self, *, client: PostgresClient) -> None:
+    def __init__(self, *, client: PostgresClient, synced: SyncedUsers) -> None:
         """
         Initializes the middleware.
 
         :param client: PostgreSQL client, connected on startup.
+        :param synced: Redis store of the users saved today.
         """
         self._client: PostgresClient = client
-        self._day: date = datetime.now(tz=UTC).date()
-        self._synced: set[int] = set()
+        self._synced: SyncedUsers = synced
 
     @override
     async def __call__(
@@ -149,12 +151,10 @@ class UserSyncMiddleware(BaseMiddleware):
         :param user: Telegram user who sent the update.
         :return: None
         """
-        # 1. A new UTC day: everyone has to be synced again
-        today: date = datetime.now(tz=UTC).date()
-        if today != self._day:
-            self._day = today
-            self._synced.clear()
-        if user.id in self._synced:
+        # 1. Already saved today (UTC): nothing to do
+        now: datetime = datetime.now(tz=UTC)
+        today: date = now.date()
+        if await self._synced.is_synced(user_id=user.id, day=today):
             return
         # 2. Upsert; on failure the user stays unsynced, so the next update retries
         # Text fields are cut to the column sizes of users, so an unexpected long value can't fail the insert
@@ -176,4 +176,4 @@ class UserSyncMiddleware(BaseMiddleware):
         except (PostgresError, InterfaceError, OSError) as exc:
             logger.error(f"Failed to save user {user.id}: {exc!r}")
             return
-        self._synced.add(user.id)
+        await self._synced.mark(user_id=user.id, now=now)

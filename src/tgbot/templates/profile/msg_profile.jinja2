@@ -1,0 +1,6 @@
+👤 <b>{{ first_name }}</b>
+
+🆔 {% trans %}User ID{% endtrans %}: <code>{{ user_id }}</code>
+{% if registered_on %}
+📅 {% trans %}Registered{% endtrans %}: {{ registered_on }}
+{% endif %}

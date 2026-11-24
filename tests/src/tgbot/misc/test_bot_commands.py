@@ -50,6 +50,8 @@ async def mock_tmpl_render() -> TmplRender:
             return "Start description"
         if tmpl == "common/cmd_help.jinja2":
             return "Help description"
+        if tmpl == "common/cmd_profile.jinja2":
+            return "Profile description"
         if tmpl == "common/cmd_settings.jinja2":
             return "Settings description"
         if tmpl == "admin/cmd_admin.jinja2":
@@ -103,13 +105,15 @@ async def test_get_commands(bot_commands: BotCommands, mock_tmpl_render: TmplRen
     result: list[BotCommand] = await bot_commands._get_commands(lang_code=lang_code)
     expected: list[BotCommand] = [
         BotCommand(command="start", description="Start description"),
-        BotCommand(command="help", description="Help description"),
+        BotCommand(command="profile", description="Profile description"),
         BotCommand(command="settings", description="Settings description"),
+        BotCommand(command="help", description="Help description"),
     ]
     assert result == expected
-    assert mocked(mock_tmpl_render.render).call_count == 3
+    assert mocked(mock_tmpl_render.render).call_count == 4
     mocked(mock_tmpl_render.render).assert_any_call(tmpl="common/cmd_start.jinja2", locale=lang_code)
     mocked(mock_tmpl_render.render).assert_any_call(tmpl="common/cmd_help.jinja2", locale=lang_code)
+    mocked(mock_tmpl_render.render).assert_any_call(tmpl="common/cmd_profile.jinja2", locale=lang_code)
     mocked(mock_tmpl_render.render).assert_any_call(tmpl="common/cmd_settings.jinja2", locale=lang_code)
 
 
@@ -150,8 +154,9 @@ async def test_set_commands(bot_commands: BotCommands, mock_tmpl_render: TmplRen
     # Check private chats commands for each locale
     expected_commands: list[BotCommand] = [
         BotCommand(command="start", description="Start description"),
-        BotCommand(command="help", description="Help description"),
+        BotCommand(command="profile", description="Profile description"),
         BotCommand(command="settings", description="Settings description"),
+        BotCommand(command="help", description="Help description"),
     ]
     for locale in [None, "en", "ru"]:
         mocked(mock_bot.set_my_commands).assert_any_call(
@@ -160,8 +165,9 @@ async def test_set_commands(bot_commands: BotCommands, mock_tmpl_render: TmplRen
     # Check admin commands for each admin ID and locale
     expected_admin_commands: list[BotCommand] = [
         BotCommand(command="start", description="Start description"),
-        BotCommand(command="help", description="Help description"),
+        BotCommand(command="profile", description="Profile description"),
         BotCommand(command="settings", description="Settings description"),
+        BotCommand(command="help", description="Help description"),
         BotCommand(command="admin", description="Admin description"),
     ]
     for admin_id in [123, 456]:
@@ -170,7 +176,7 @@ async def test_set_commands(bot_commands: BotCommands, mock_tmpl_render: TmplRen
                 commands=expected_admin_commands, language_code=locale, scope=BotCommandScopeChat(chat_id=admin_id)
             )
     assert mocked(mock_tmpl_render.get_locales).call_count == 1
-    assert mocked(mock_tmpl_render.render).call_count == 12  # 4 per locale (default, en, ru)
+    assert mocked(mock_tmpl_render.render).call_count == 15  # 5 per locale (default, en, ru)
     assert mocked(mock_bot.set_my_commands).call_count == 11  # 2 cleanups + 3 locales * (1 private + 2 admins)
 
 
@@ -192,7 +198,7 @@ async def test_set_commands_no_locales(mock_bot: Bot, mock_tmpl_render: TmplRend
     # Check private chats commands cleanup
     mocked(mock_bot.set_my_commands).assert_any_call(commands=[], scope=BotCommandScopeAllPrivateChats())
     # Only the default commands are set, for private chats and the admin
-    assert mocked(mock_tmpl_render.render).call_count == 4
+    assert mocked(mock_tmpl_render.render).call_count == 5
     assert mocked(mock_bot.set_my_commands).call_count == 4  # 2 cleanups + 1 private + 1 admin
 
 
@@ -215,8 +221,9 @@ async def test_set_commands_empty_admin_ids(mock_bot: Bot, mock_tmpl_render: Tmp
     # Check private chats commands for each locale
     expected_commands: list[BotCommand] = [
         BotCommand(command="start", description="Start description"),
-        BotCommand(command="help", description="Help description"),
+        BotCommand(command="profile", description="Profile description"),
         BotCommand(command="settings", description="Settings description"),
+        BotCommand(command="help", description="Help description"),
     ]
     mocked(mock_bot.set_my_commands).assert_any_call(
         commands=expected_commands, language_code="en", scope=BotCommandScopeAllPrivateChats()
@@ -225,5 +232,5 @@ async def test_set_commands_empty_admin_ids(mock_bot: Bot, mock_tmpl_render: Tmp
         commands=expected_commands, language_code="ru", scope=BotCommandScopeAllPrivateChats()
     )
     assert mocked(mock_tmpl_render.get_locales).call_count == 1
-    assert mocked(mock_tmpl_render.render).call_count == 12  # 4 per locale (default, en, ru)
+    assert mocked(mock_tmpl_render.render).call_count == 15  # 5 per locale (default, en, ru)
     assert mocked(mock_bot.set_my_commands).call_count == 5  # 2 cleanups + 3 locales

@@ -183,6 +183,31 @@ async def test_edit_or_send_callback_failure(
     assert result == origin.answer.return_value
 
 
+@pytest.mark.asyncio
+async def test_edit_or_send_callback_send_fails(
+    base_service: BaseService, mock_tmpl: TmplRender, callback_query: CallbackQuery
+) -> None:
+    """
+    Test that when the new message can't be sent either (e.g. a markup error), no "expired" alert is shown.
+
+    The callback is answered without text, so the button stops loading, and the error goes on.
+
+    :param base_service: Instance of BaseService.
+    :param mock_tmpl: Mocked TmplRender object.
+    :param callback_query: Mocked CallbackQuery object.
+    """
+    error: TelegramBadRequest = TelegramBadRequest(method=EditMessageText(text="Test"), message="can't parse entities")
+    origin: NonCallableMock = mocked(callback_query.message)
+    origin.edit_text = AsyncMock(side_effect=error)
+    origin.answer = AsyncMock(side_effect=error)
+    callback_query.answer = AsyncMock()
+    mock_tmpl.render = AsyncMock(return_value="Expired action text")
+    with pytest.raises(expected_exception=TelegramBadRequest, match="can't parse entities"):
+        await base_service._edit_or_send_callback(call=callback_query, text="<b")
+    callback_query.answer.assert_called_once_with()
+    mock_tmpl.render.assert_not_called()
+
+
 # noinspection PyUnresolvedReferences
 @pytest.mark.asyncio
 async def test_edit_or_send_callback_same_content(
