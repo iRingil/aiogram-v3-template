@@ -113,7 +113,7 @@ class BaseService:
                 return edited if isinstance(edited, Message) else origin
         # The message can't be edited (e.g. older than 48 hours, or deleted): send the content as a new one.
         # The "Action expired" alert is shown only once the new message is sent: an edit that failed for another
-        # reason (e.g. a markup error) fails the send too, and then there is nothing expired to tell the user about
+        # reason (e.g. a markup error) fails as a new message too, and then nothing expired is to be reported
         try:
             sent: Message = (
                 await self._bot_of(event=call).send_message(

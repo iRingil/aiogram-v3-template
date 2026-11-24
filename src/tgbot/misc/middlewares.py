@@ -68,6 +68,8 @@ class AntiFloodMiddleware(BaseMiddleware):
             return None
         return await handler(event, data)
 
+    # A pipeline queues the commands and returns itself, redis-py types them as awaitables like the client's
+    # noinspection PyAsyncCall
     async def _allow(self, *, user_id: int) -> bool:
         """
         Records an update of the user in their window and tells whether it is within the limit.

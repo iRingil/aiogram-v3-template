@@ -51,6 +51,8 @@ class SyncedUsers:
         """
         midnight: datetime = datetime.combine(date=now.date() + timedelta(days=1), time=time(), tzinfo=UTC)
         ttl: int = max(1, ceil((midnight - now).total_seconds()))
+        # redis-py overloads set() on the client protocol; PyCharm takes the sync and async results together
+        # noinspection PyUnresolvedReferences
         await self._redis.set(name=self._key(user_id=user_id), value=now.date().isoformat(), ex=ttl)
 
     async def forget(self, *, user_id: int) -> None:

@@ -264,7 +264,7 @@ class TestExceedsLimit:
 
     async def test_zcard_of_another_type_is_an_error(self, handler: _HandlerSpy) -> None:
         """
-        A ZCARD result that is not a number fails loudly instead of letting the update through.
+        A ZCARD result other than an integer fails loudly instead of letting the update through.
 
         :param handler: The handler spy fixture.
         :return: None
@@ -629,22 +629,22 @@ class TestUserSync:
         real_upsert: Callable[..., Awaitable[None]] = UserRepo.upsert
         calls: list[int] = []
 
-        async def failing_once(self: UserRepo, *, user: TgUser) -> None:
+        async def failing_once(repo: UserRepo, *, user: TgUser) -> None:
             """
             Raises on the first call, then saves the user for real.
 
-            :param self: The repository.
+            :param repo: The repository.
             :param user: The user to save.
             :return: None
             """
             calls.append(user.id)
             if len(calls) == 1:
                 raise PostgresError("down")
-            await real_upsert(self, user=user)
+            await real_upsert(repo, user=user)
 
         with (
             patch.object(target=UserRepo, attribute="upsert", new=failing_once),
-            patch.object(target=middlewares, attribute="logger") as mock_logger,
+            patch(target="tgbot.misc.middlewares.logger") as mock_logger,
         ):
             assert await sync(handler=handler, event=_EVENT, data=_tg_user()) == "handled"
             mock_logger.error.assert_called_once()
@@ -708,21 +708,21 @@ class TestUserSync:
         :return: None
         """
 
-        async def hanging(self: UserRepo, *, user: TgUser) -> None:
+        async def hanging(repo: UserRepo, *, user: TgUser) -> None:
             """
             Stands in for an upsert on a database that doesn't answer.
 
-            :param self: The repository.
+            :param repo: The repository.
             :param user: The user to save.
             :return: None
             """
-            del self, user
+            del repo, user
             await sleep(delay=10)
 
         monkeypatch.setattr(target=sync, name="_timeout", value=0.05)
         with (
             patch.object(target=UserRepo, attribute="upsert", new=hanging),
-            patch.object(target=middlewares, attribute="logger") as mock_logger,
+            patch(target="tgbot.misc.middlewares.logger") as mock_logger,
         ):
             assert await sync(handler=handler, event=_EVENT, data=_tg_user()) == "handled"
         mock_logger.error.assert_called_once()

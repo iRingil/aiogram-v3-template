@@ -285,6 +285,8 @@ async def test_delete_request(profile_svc: ProfileService, call: CallbackQuery, 
     :param tmpl: Mocked TmplRender instance.
     :return: None
     """
+    # PyCharm looks the patched name up only in the class itself; the method is inherited from BaseService
+    # noinspection PyUnresolvedReferences
     with patch.object(target=profile_svc, attribute="_edit_or_send_callback", new=AsyncMock()) as edit:
         await profile_svc.delete_request(call=call)
     mocked(tmpl.render).assert_called_once_with(tmpl=profile_svc._msg_delete_confirm, locale="en")
@@ -301,6 +303,8 @@ async def test_delete_cancel(profile_svc: ProfileService, call: CallbackQuery, t
     :param tmpl: Mocked TmplRender instance.
     :return: None
     """
+    # PyCharm looks the patched name up only in the class itself; the method is inherited from BaseService
+    # noinspection PyUnresolvedReferences
     with patch.object(target=profile_svc, attribute="_edit_or_send_callback", new=AsyncMock()) as edit:
         await profile_svc.delete_cancel(call=call)
     mocked(tmpl.render).assert_called_once_with(
@@ -339,6 +343,8 @@ async def test_delete_confirm(
             )
         )
         await synced.mark(user_id=user_id, now=now)
+    # PyCharm looks the patched name up only in the class itself; the method is inherited from BaseService
+    # noinspection PyUnresolvedReferences
     with patch.object(target=profile_svc, attribute="_edit_or_send_callback", new=AsyncMock()) as edit:
         await profile_svc.delete_confirm(call=call)
     assert await users.get(user_id=999) is None

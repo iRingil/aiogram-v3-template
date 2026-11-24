@@ -36,9 +36,9 @@ def mock_tmpl_render() -> TmplRender:
         """
         return f"{tmpl}@{locale}"
 
-    tmpl: MagicMock = MagicMock(spec=TmplRender)
-    tmpl.render = AsyncMock(side_effect=render)
-    return tmpl
+    mock: MagicMock = MagicMock(spec=TmplRender)
+    mock.render = AsyncMock(side_effect=render)
+    return mock
 
 
 def test_init(mock_tmpl_render: TmplRender) -> None:

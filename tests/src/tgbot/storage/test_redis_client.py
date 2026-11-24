@@ -19,6 +19,8 @@ async def test_tcp_round_trip(redis: Redis) -> None:
     :param redis: The test Redis client.
     :return: None
     """
+    # redis-py overloads set() on the client protocol; PyCharm takes the sync and async results together
+    # noinspection PyUnresolvedReferences
     await redis.set(name="key", value="value")
     value: bytes | str | None = await redis.get(name="key")
     assert value == "value"
@@ -36,7 +38,7 @@ def test_socket() -> None:
     credentials: RedisCredentials = RedisCredentials.model_validate(
         {"socket_path": "/run/redis/redis.sock", "db": 0, "user": "user", "password": "pass"}
     )
-    kwargs: dict[str, object] = RedisClient(credentials=credentials).redis.connection_pool.connection_kwargs
+    kwargs: dict[str, object] = RedisClient(credentials=credentials).redis.get_connection_kwargs()
     assert kwargs["path"] == str(credentials.socket_path)
     assert (kwargs["username"], kwargs["password"]) == ("user", "pass")
     assert kwargs["decode_responses"] is True
@@ -61,6 +63,8 @@ async def test_value_text(redis: Redis) -> None:
     :param redis: The test Redis client.
     :return: None
     """
+    # redis-py overloads set() on the client protocol; PyCharm takes the sync and async results together
+    # noinspection PyUnresolvedReferences
     await redis.set(name="key", value="value")
     assert RedisValue.text(value=await redis.get(name="key")) == "value"
     assert RedisValue.text(value=await redis.get(name="missing")) is None
@@ -84,6 +88,8 @@ async def test_scan_keys(redis: Redis) -> None:
     :return: None
     """
     for key in ("signal:BTC", "signal:ETH", "other:BTC"):
+        # redis-py overloads set() on the client protocol; PyCharm takes the sync and async results together
+        # noinspection PyUnresolvedReferences
         await redis.set(name=key, value="1")
     assert sorted(await RedisValue.scan_keys(redis=redis, pattern="signal:*")) == ["signal:BTC", "signal:ETH"]
     assert await RedisValue.scan_keys(redis=redis, pattern="none:*") == []

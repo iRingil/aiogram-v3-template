@@ -251,7 +251,7 @@ async def test_send_gives_up_after_the_last_attempt(
     broadcaster: Broadcaster, bot: MagicMock, sleep_calls: list[float]
 ) -> None:
     """
-    Test that a flood limit on every attempt is raised after the last one, without a wait after it.
+    Test that a flood limit on every attempt is raised after the last one, with no delay before raising.
 
     :param broadcaster: The Broadcaster fixture.
     :param bot: The mocked Bot fixture.

@@ -59,7 +59,7 @@ def _validate_https(value: HttpUrl) -> HttpUrl:
 
 def _validate_socket_path(value: Path) -> Path:
     """
-    Accepts a socket path that is not empty: an empty value in the .env file becomes Path("."), the current folder.
+    Accepts a socket path that is not empty: an empty value in the .env file would point to the current folder.
 
     :param value: The path.
     :return: The path unchanged.
@@ -76,7 +76,7 @@ def _validate_secret_token(value: SecretStr) -> SecretStr:
 
     :param value: The token.
     :return: The token unchanged.
-    :raises ValueError: if the token is longer than 256 characters or has characters other than A-Z a-z 0-9 _ -.
+    :raises ValueError: if the token is not 1-256 characters of Latin letters, digits, '_' and '-'.
     """
     if not _SECRET_TOKEN.fullmatch(value.get_secret_value()):
         raise ValueError("The webhook token must be 1-256 characters of A-Z, a-z, 0-9, '_' and '-'")
@@ -112,7 +112,7 @@ class WebhookCredentials(BaseModel):
 
     :cvar model_config: Frozen: the values don't change after the config is read.
     :param wh_host: Public HTTPS address of the bot, without the path.
-    :param wh_path: Webhook path, without the leading "/": segments of A-Z a-z 0-9 _ - joined by "/".
+    :param wh_path: Webhook path, without the leading "/": slash-separated segments of Latin letters, digits, '_', '-'.
     :param wh_token: Secret token Telegram sends in every webhook request.
     :param app_host: Address the webapp listens on.
     :param app_port: Port the webapp listens on.
